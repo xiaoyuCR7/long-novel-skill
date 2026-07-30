@@ -1,0 +1,541 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>📖 Long Novel Dashboard</title>
+<style>
+/* ===== 全局样式 ===== */
+*{margin:0;padding:0;box-sizing:border-box}
+body{
+  font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
+  background:#0f0f1a;color:#e4e4e7;line-height:1.6;
+  min-height:100vh;
+}
+a{color:#e94560;text-decoration:none}
+a:hover{text-decoration:underline}
+
+/* ===== 顶部导航 ===== */
+.header{
+  background:linear-gradient(135deg,#1a1a2e 0%,#16213e 100%);
+  padding:16px 24px;border-bottom:1px solid #2a2a4a;
+  display:flex;align-items:center;justify-content:space-between;
+  position:sticky;top:0;z-index:100;
+}
+.header h1{font-size:1.3rem;color:#e94560;display:flex;align-items:center;gap:8px}
+.header .meta{display:flex;gap:16px;font-size:0.85rem;color:#888}
+.header .meta span b{color:#e94560}
+
+/* ===== Tab 导航 ===== */
+.tabs{
+  display:flex;gap:2px;padding:0 24px;background:#16213e;
+  border-bottom:1px solid #2a2a4a;overflow-x:auto;
+}
+.tab{
+  padding:12px 20px;cursor:pointer;border:none;background:transparent;
+  color:#888;font-size:0.9rem;border-bottom:2px solid transparent;
+  white-space:nowrap;transition:all 0.2s;
+}
+.tab:hover{color:#e4e4e7;background:#1a1a2e}
+.tab.active{color:#e94560;border-bottom-color:#e94560;background:#0f0f1a}
+.tab .badge{
+  display:inline-block;padding:1px 6px;margin-left:6px;
+  background:#2a2a4a;color:#888;border-radius:10px;font-size:0.75rem;
+}
+.tab.active .badge{background:#e94560;color:#fff}
+
+/* ===== 内容区 ===== */
+.content{padding:24px;max-width:1400px;margin:0 auto}
+.panel{display:none}
+.panel.active{display:block;animation:fadeIn 0.3s ease}
+@keyframes fadeIn{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:translateY(0)}}
+
+/* ===== 卡片 ===== */
+.card{
+  background:#1a1a2e;border-radius:12px;padding:20px;margin-bottom:16px;
+  border:1px solid #2a2a4a;box-shadow:0 2px 8px rgba(0,0,0,0.2);
+}
+.card h2{font-size:1.1rem;color:#e94560;margin-bottom:16px;display:flex;align-items:center;gap:8px}
+.card h3{font-size:0.95rem;color:#a4a4b4;margin:12px 0 8px}
+
+/* ===== 统计卡片网格 ===== */
+.stats-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:16px;margin-bottom:24px}
+.stat-card{
+  background:linear-gradient(135deg,#16213e 0%,#1a1a2e 100%);
+  border-radius:12px;padding:20px;border:1px solid #2a2a4a;
+  transition:transform 0.2s,border-color 0.2s;
+}
+.stat-card:hover{transform:translateY(-2px);border-color:#e94560}
+.stat-card .value{font-size:2rem;font-weight:700;color:#e94560;line-height:1.2}
+.stat-card .label{font-size:0.85rem;color:#888;margin-top:6px}
+.stat-card.good .value{color:#4ade80}
+.stat-card.warn .value{color:#fbbf24}
+.stat-card.bad .value{color:#f87171}
+
+/* ===== 表格 ===== */
+.table-wrap{overflow-x:auto;border-radius:8px;border:1px solid #2a2a4a}
+table{width:100%;border-collapse:collapse;font-size:0.88rem}
+th{
+  background:#16213e;color:#e94560;padding:12px;text-align:left;
+  font-weight:600;white-space:nowrap;position:sticky;top:0;
+}
+td{padding:10px 12px;border-bottom:1px solid #2a2a4a}
+tr:hover td{background:#16213e50}
+tr:last-child td{border-bottom:none}
+
+/* ===== 状态标签 ===== */
+.tag{display:inline-block;padding:2px 10px;border-radius:12px;font-size:0.78rem;font-weight:500}
+.tag.pass{background:#166534;color:#4ade80}
+.tag.fail{background:#7f1d1d;color:#f87171}
+.tag.pending{background:#292524;color:#a8a29e}
+.tag.warn{background:#78350f;color:#fbbf24}
+.tag.info{background:#1e3a5f;color:#60a5fa}
+
+/* ===== 伏笔状态 ===== */
+.foreshadow-state{
+  display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:6px;
+}
+.foreshadow-state.planted{background:#60a5fa}
+.foreshadow-state.active{background:#fbbf24}
+.foreshadow-state.recycled{background:#4ade80}
+.foreshadow-state.dropped{background:#6b7280}
+
+/* ===== 文件树 ===== */
+.file-tree{font-family:ui-monospace,Consolas,monospace;font-size:0.85rem}
+.file-tree ul{list-style:none;padding-left:16px}
+.file-tree>ul{padding-left:0}
+.file-tree li{padding:4px 0;cursor:pointer}
+.file-tree li:hover{background:#16213e50;border-radius:4px}
+.file-tree .folder::before{content:"📁 ";margin-right:4px}
+.file-tree .folder.open::before{content:"📂 "}
+.file-tree .file::before{content:"📄 ";margin-right:4px}
+.file-tree .file.md::before{content:"📝 "}
+.file-tree .file.json::before{content:"📋 "}
+.file-tree .file.yaml::before,.file-tree .file.yml::before{content:"⚙️ "}
+.file-tree .children{display:none}
+.file-tree .children.open{display:block}
+
+/* ===== Markdown预览 ===== */
+.preview-area{
+  background:#0f0f1a;border-radius:8px;padding:20px;
+  max-height:600px;overflow-y:auto;border:1px solid #2a2a4a;
+}
+.preview-area h1,.preview-area h2,.preview-area h3{color:#e94560;margin:16px 0 8px}
+.preview-area h1{font-size:1.4rem;border-bottom:1px solid #2a2a4a;padding-bottom:8px}
+.preview-area h2{font-size:1.15rem}
+.preview-area h3{font-size:1rem}
+.preview-area p{margin:8px 0}
+.preview-area code{background:#2a2a4a;padding:2px 6px;border-radius:4px;font-family:ui-monospace,Consolas,monospace}
+.preview-area pre{background:#2a2a4a;padding:12px;border-radius:8px;overflow-x:auto}
+.preview-area ul,.preview-area ol{padding-left:24px;margin:8px 0}
+.preview-area li{margin:4px 0}
+.preview-area blockquote{border-left:3px solid #e94560;padding-left:16px;color:#a4a4b4;margin:12px 0}
+
+/* ===== 图表容器 ===== */
+.chart-container{width:100%;height:300px;position:relative}
+.chart-container canvas{width:100%!important;height:100%!important}
+
+/* ===== 加载/空状态 ===== */
+.loading,.empty{
+  text-align:center;padding:40px;color:#6b7280;
+}
+.loading::after{content:"";display:inline-block;width:20px;height:20px;
+  border:2px solid #2a2a4a;border-top-color:#e94560;border-radius:50%;
+  animation:spin 0.8s linear infinite;margin-left:12px;vertical-align:middle}
+@keyframes spin{to{transform:rotate(360deg)}}
+
+/* ===== 双列布局 ===== */
+.two-col{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+@media(max-width:900px){.two-col{grid-template-columns:1fr}}
+
+/* ===== 滚动条 ===== */
+::-webkit-scrollbar{width:8px;height:8px}
+::-webkit-scrollbar-track{background:#0f0f1a}
+::-webkit-scrollbar-thumb{background:#2a2a4a;border-radius:4px}
+::-webkit-scrollbar-thumb:hover{background:#e94560}
+</style>
+</head>
+<body>
+
+<!-- 顶部导航 -->
+<div class="header">
+  <h1>📖 Long Novel Dashboard</h1>
+  <div class="meta">
+    <span id="book-name">加载中...</span>
+    <span>更新时间：<b id="update-time">-</b></span>
+  </div>
+</div>
+
+<!-- Tab导航 -->
+<div class="tabs">
+  <button class="tab active" data-tab="status">🏠 状态总览</button>
+  <button class="tab" data-tab="chapters">📚 章节列表 <span class="badge" id="tab-chapters-count">0</span></button>
+  <button class="tab" data-tab="quality">📊 质量趋势</button>
+  <button class="tab" data-tab="foreshadow">🔮 伏笔台账 <span class="badge" id="tab-foreshadow-count">0</span></button>
+  <button class="tab" data-tab="files">📁 文件浏览</button>
+</div>
+
+<!-- 内容区 -->
+<div class="content">
+
+  <!-- 状态总览 -->
+  <div class="panel active" id="panel-status">
+    <div class="stats-grid" id="stats-grid">
+      <div class="loading">加载统计数据...</div>
+    </div>
+    <div class="two-col">
+      <div class="card">
+        <h2>📈 最近章节</h2>
+        <div id="recent-chapters"><div class="loading">加载中...</div></div>
+      </div>
+      <div class="card">
+        <h2>⚡ 快捷操作</h2>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+          <button class="tab" style="border:1px solid #2a2a4a;border-radius:8px" onclick="switchTab('chapters')">📚 查看章节</button>
+          <button class="tab" style="border:1px solid #2a2a4a;border-radius:8px" onclick="switchTab('quality')">📊 质量趋势</button>
+          <button class="tab" style="border:1px solid #2a2a4a;border-radius:8px" onclick="switchTab('foreshadow')">🔮 伏笔台账</button>
+          <button class="tab" style="border:1px solid #2a2a4a;border-radius:8px" onclick="switchTab('files')">📁 浏览文件</button>
+        </div>
+        <h3>终端命令</h3>
+        <div style="background:#0f0f1a;padding:12px;border-radius:8px;font-family:ui-monospace,Consolas,monospace;font-size:0.82rem;color:#a4a4b4">
+          <div># 写新章节</div>
+          <div>python novel-cli.py write &lt;章节号&gt;</div>
+          <div style="margin-top:8px"># 质量检查</div>
+          <div>python scripts/check_text.py 正文/第XXX章.md</div>
+          <div style="margin-top:8px"># 查看状态</div>
+          <div>python novel-cli.py status</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 章节列表 -->
+  <div class="panel" id="panel-chapters">
+    <div class="card">
+      <h2>📚 所有章节 <span style="font-size:0.8rem;color:#888;font-weight:normal" id="chapters-summary"></span></h2>
+      <div id="chapters-table"><div class="loading">加载中...</div></div>
+    </div>
+  </div>
+
+  <!-- 质量趋势 -->
+  <div class="panel" id="panel-quality">
+    <div class="card">
+      <h2>📊 AI味分数趋势</h2>
+      <div class="chart-container" id="ai-score-chart"><div class="loading">加载中...</div></div>
+    </div>
+    <div class="card">
+      <h2>📝 门禁通过率趋势</h2>
+      <div class="chart-container" id="gate-chart"><div class="loading">加载中...</div></div>
+    </div>
+    <div class="card">
+      <h2>📏 每章字数</h2>
+      <div class="chart-container" id="chars-chart"><div class="loading">加载中...</div></div>
+    </div>
+  </div>
+
+  <!-- 伏笔台账 -->
+  <div class="panel" id="panel-foreshadow">
+    <div class="card">
+      <h2>🔮 伏笔台账 <span style="font-size:0.8rem;color:#888;font-weight:normal" id="foreshadow-summary"></span></h2>
+      <div id="foreshadow-legend" style="margin-bottom:12px;display:flex;gap:16px;flex-wrap:wrap">
+        <span><span class="foreshadow-state planted"></span>埋设中</span>
+        <span><span class="foreshadow-state active"></span>已激活</span>
+        <span><span class="foreshadow-state recycled"></span>已回收</span>
+        <span><span class="foreshadow-state dropped"></span>已废弃</span>
+      </div>
+      <div id="foreshadow-table"><div class="loading">加载中...</div></div>
+    </div>
+  </div>
+
+  <!-- 文件浏览 -->
+  <div class="panel" id="panel-files">
+    <div class="two-col">
+      <div class="card">
+        <h2>📁 目录树</h2>
+        <div class="file-tree" id="file-tree"><div class="loading">加载中...</div></div>
+      </div>
+      <div class="card">
+        <h2>📄 文件预览 <span id="file-preview-name" style="font-size:0.8rem;color:#888;font-weight:normal"></span></h2>
+        <div class="preview-area" id="file-preview"><div class="empty">点击左侧文件查看内容</div></div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+// =============================================================================
+// 工具函数
+// =============================================================================
+async function api(path){
+  const res=await fetch(path);
+  if(!res.ok)throw new Error('API请求失败: '+path);
+  return res.json();
+}
+
+function fmtNum(n){
+  if(n>=10000)return(n/10000).toFixed(1)+'万';
+  return n.toLocaleString();
+}
+
+function fmtTime(){
+  const d=new Date();
+  return d.toLocaleString('zh-CN');
+}
+
+function stateClass(state){
+  const map={'埋设':'planted','埋设中':'planted','激活':'active','已激活':'active',
+    '回收':'recycled','已回收':'recycled','废弃':'dropped','已废弃':'dropped'};
+  return map[state]||'planted';
+}
+
+// =============================================================================
+// Tab切换
+// =============================================================================
+function switchTab(name){
+  document.querySelectorAll('.tab').forEach(t=>t.classList.toggle('active',t.dataset.tab===name));
+  document.querySelectorAll('.panel').forEach(p=>p.classList.toggle('active',p.id==='panel-'+name));
+  if(name==='chapters')loadChapters();
+  if(name==='quality')loadQuality();
+  if(name==='foreshadow')loadForeshadow();
+  if(name==='files')loadFileTree();
+}
+document.querySelectorAll('.tab').forEach(t=>t.addEventListener('click',()=>switchTab(t.dataset.tab)));
+
+// =============================================================================
+// 状态总览
+// =============================================================================
+async function loadStatus(){
+  try{
+    const s=await api('/api/status');
+    document.getElementById('book-name').textContent=s.book_name;
+    document.getElementById('update-time').textContent=fmtTime();
+
+    const gateClass=s.gate_passed===null?'pending':(s.gate_passed?'good':'bad');
+    const gateText=s.gate_passed===null?'未检查':(s.gate_passed?'全部通过':'有未通过');
+
+    document.getElementById('stats-grid').innerHTML=`
+      <div class="stat-card"><div class="value">${s.last_chapter}</div><div class="label">最新章节</div></div>
+      <div class="stat-card"><div class="value">${s.chapter_count}</div><div class="label">章节总数</div></div>
+      <div class="stat-card"><div class="value">${fmtNum(s.total_chars)}</div><div class="label">总字数</div></div>
+      <div class="stat-card"><div class="value">${fmtNum(s.daily_avg)}</div><div class="label">平均每章</div></div>
+      <div class="stat-card ${gateClass}"><div class="value">${gateText}</div><div class="label">门禁状态</div></div>
+    `;
+
+    // 最近章节（用章节API）
+    const chs=await api('/api/chapters');
+    document.getElementById('tab-chapters-count').textContent=chs.length;
+    const recent=chs.slice().reverse().slice(0,5);
+    document.getElementById('recent-chapters').innerHTML=`
+      <div class="table-wrap"><table><thead><tr><th>章节</th><th>标题</th><th>字数</th><th>门禁</th></tr></thead>
+      <tbody>${recent.map(c=>`
+        <tr>
+          <td>第${c.chapter}章</td>
+          <td>${c.title}</td>
+          <td>${fmtNum(c.chars)}</td>
+          <td>${c.gate_passed===null?'<span class="tag pending">未检查</span>':
+            c.gate_passed?'<span class="tag pass">通过</span>':'<span class="tag fail">未通过</span>'}</td>
+        </tr>`).join('')}
+      </tbody></table></div>`;
+  }catch(e){document.getElementById('stats-grid').innerHTML=`<div class="empty">加载失败:${e.message}</div>`}
+}
+
+// =============================================================================
+// 章节列表
+// =============================================================================
+let allChapters=[];
+async function loadChapters(){
+  try{
+    allChapters=await api('/api/chapters');
+    document.getElementById('chapters-summary').textContent=`共${allChapters.length}章`;
+    const rows=allChapters.slice().reverse().map(c=>`
+      <tr>
+        <td>第${c.chapter}章</td>
+        <td>${c.title}</td>
+        <td>${fmtNum(c.chars)}字</td>
+        <td>${c.ai_score!=null?c.ai_score.toFixed(1)+'分':'<span style="color:#6b7280">未评分</span>'}</td>
+        <td>${c.gate_passed===null?'<span class="tag pending">未检查</span>':
+          c.gate_passed?'<span class="tag pass">通过</span>':'<span class="tag fail">未通过</span>'}</td>
+      </tr>`).join('');
+    document.getElementById('chapters-table').innerHTML=`<div class="table-wrap">
+      <table><thead><tr><th>章节</th><th>标题</th><th>字数</th><th>AI味分</th><th>门禁</th></tr></thead>
+      <tbody>${rows||'<tr><td colspan="5" class="empty">暂无章节</td></tr>'}</tbody></table></div>`;
+  }catch(e){document.getElementById('chapters-table').innerHTML=`<div class="empty">加载失败:${e.message}</div>`}
+}
+
+// =============================================================================
+// 质量趋势（纯Canvas画图，零依赖）
+// =============================================================================
+function drawLineChart(canvasId,labels,data,color='#e94560',label=''){
+  const canvas=document.getElementById(canvasId);
+  if(!canvas)return;
+  const ctx=canvas.getContext('2d');
+  const dpr=window.devicePixelRatio||1;
+  const w=canvas.clientWidth,h=canvas.clientHeight;
+  canvas.width=w*dpr;canvas.height=h*dpr;
+  ctx.scale(dpr,dpr);
+  ctx.clearRect(0,0,w,h);
+
+  if(!data||data.length===0){
+    ctx.fillStyle='#6b7280';ctx.font='14px sans-serif';
+    ctx.fillText('暂无数据',w/2-40,h/2);return;
+  }
+
+  const pad={l:50,r:20,t:20,b:40};
+  const cw=w-pad.l-pad.r,ch=h-pad.t-pad.b;
+  const valid=data.filter(v=>v!=null);
+  const maxV=Math.max(...valid,10),minV=0;
+
+  // 网格线
+  ctx.strokeStyle='#2a2a4a';ctx.lineWidth=1;
+  for(let i=0;i<=4;i++){
+    const y=pad.t+ch*(i/4);
+    ctx.beginPath();ctx.moveTo(pad.l,y);ctx.lineTo(w-pad.r,y);ctx.stroke();
+    ctx.fillStyle='#888';ctx.font='11px sans-serif';ctx.textAlign='right';
+    ctx.fillText(Math.round(maxV-(maxV-minV)*(i/4)),pad.l-8,y+4);
+  }
+
+  // 数据线
+  ctx.strokeStyle=color;ctx.lineWidth=2;ctx.beginPath();
+  const step=cw/Math.max(data.length-1,1);
+  let first=true;
+  data.forEach((v,i)=>{
+    if(v==null)return;
+    const x=pad.l+step*i,y=pad.t+ch-(v-minV)/(maxV-minV)*ch;
+    if(first){ctx.moveTo(x,y);first=false}else ctx.lineTo(x,y);
+  });
+  ctx.stroke();
+
+  // 数据点
+  ctx.fillStyle=color;
+  data.forEach((v,i)=>{
+    if(v==null)return;
+    const x=pad.l+step*i,y=pad.t+ch-(v-minV)/(maxV-minV)*ch;
+    ctx.beginPath();ctx.arc(x,y,3,0,Math.PI*2);ctx.fill();
+  });
+
+  // X轴标签
+  ctx.fillStyle='#888';ctx.font='10px sans-serif';ctx.textAlign='center';
+  const labelStep=Math.ceil(labels.length/8);
+  labels.forEach((l,i)=>{
+    if(i%labelStep!==0&&i!==labels.length-1)return;
+    ctx.fillText(l,pad.l+step*i,h-10);
+  });
+
+  // 图例
+  if(label){
+    ctx.fillStyle=color;ctx.font='12px sans-serif';ctx.textAlign='left';
+    ctx.fillRect(pad.l,2,12,12);ctx.fillStyle='#a4a4b4';
+    ctx.fillText(' '+label,pad.l+16,12);
+  }
+}
+
+async function loadQuality(){
+  try{
+    const t=await api('/api/quality-trend');
+    drawLineChart('ai-score-chart',t.labels,t.ai_scores,'#e94560','AI味分数');
+    drawLineChart('gate-chart',t.labels,t.gate_pass,'#4ade80','门禁通过');
+    drawLineChart('chars-chart',t.labels,t.chars,'#60a5fa','每章字数');
+  }catch(e){console.error(e)}
+}
+
+// =============================================================================
+// 伏笔台账
+// =============================================================================
+async function loadForeshadow(){
+  try{
+    const fs=await api('/api/foreshadowing');
+    document.getElementById('tab-foreshadow-count').textContent=fs.length;
+    const counts={planted:0,active:0,recycled:0,dropped:0};
+    fs.forEach(f=>counts[stateClass(f.state)]=(counts[stateClass(f.state)]||0)+1);
+    document.getElementById('foreshadow-summary').textContent=
+      `共${fs.length}条 · 埋设${counts.planted} · 激活${counts.active} · 回收${counts.recycled} · 废弃${counts.dropped}`;
+
+    const rows=fs.map(f=>`
+      <tr>
+        <td><code>${f.id||'-'}</code></td>
+        <td>${f.content||''}</td>
+        <td><span class="foreshadow-state ${stateClass(f.state)}"></span>${f.state}</td>
+        <td>${f.planted_ch||'-'}</td>
+        <td>${f.recycled_ch||'-'}</td>
+        <td>${f.overdue?'<span class="tag fail">超期</span>':''}</td>
+      </tr>`).join('');
+    document.getElementById('foreshadow-table').innerHTML=`<div class="table-wrap">
+      <table><thead><tr><th>ID</th><th>内容</th><th>状态</th><th>埋设章</th><th>回收章</th><th>备注</th></tr></thead>
+      <tbody>${rows||'<tr><td colspan="6" class="empty">暂无伏笔</td></tr>'}</tbody></table></div>`;
+  }catch(e){document.getElementById('foreshadow-table').innerHTML=`<div class="empty">加载失败:${e.message}</div>`}
+}
+
+// =============================================================================
+// 文件树
+// =============================================================================
+let fileTreeData=null;
+async function loadFileTree(){
+  if(fileTreeData)return renderFileTree();
+  try{
+    fileTreeData=await api('/api/file-tree');
+    renderFileTree();
+  }catch(e){document.getElementById('file-tree').innerHTML=`<div class="empty">加载失败:${e.message}</div>`}
+}
+
+function renderFileTree(){
+  document.getElementById('file-tree').innerHTML=renderTreeNode(fileTreeData.dirs,true);
+}
+
+function renderTreeNode(items,isRoot=false){
+  return `<ul class="${isRoot?'':'children open'}">${items.map(item=>{
+    const ext=item.name.split('.').pop().toLowerCase();
+    if(item.type==='dir'){
+      return `<li class="folder open" onclick="event.stopPropagation();toggleFolder(this)">
+        <span>${item.name}</span>
+        ${item.children?renderTreeNode(item.children):''}
+      </li>`;
+    }else{
+      return `<li class="file ${ext}" onclick="event.stopPropagation();previewFile('${item.path}')">${item.name}</li>`;
+    }
+  }).join('')}</ul>`;
+}
+
+function toggleFolder(el){
+  el.classList.toggle('open');
+  const children=el.querySelector(':scope>ul');
+  if(children)children.classList.toggle('open');
+}
+
+async function previewFile(relPath){
+  try{
+    document.getElementById('file-preview-name').textContent=relPath;
+    const data=await api('/api/file?path='+encodeURIComponent(relPath));
+    if(data.error){
+      document.getElementById('file-preview').innerHTML=`<div class="empty">${data.error}</div>`;return;
+    }
+    let html=data.content;
+    if(data.ext==='.md'){
+      html=html.replace(/^### (.+)$/gm,'<h3>$1</h3>')
+               .replace(/^## (.+)$/gm,'<h2>$1</h2>')
+               .replace(/^# (.+)$/gm,'<h1>$1</h1>')
+               .replace(/`([^`]+)`/g,'<code>$1</code>')
+               .replace(/\*\*([^*]+)\*\*/g,'<strong>$1</strong>')
+               .replace(/^> (.+)$/gm,'<blockquote>$1</blockquote>')
+               .replace(/\n\n/g,'</p><p>')
+               .replace(/\n/g,'<br>');
+      html='<p>'+html+'</p>';
+    }else if(data.ext==='.json'){
+      try{html='<pre>'+JSON.stringify(JSON.parse(data.content),null,2)+'</pre>'}
+      catch(e){html='<pre>'+data.content+'</pre>'}
+    }else{
+      html='<pre>'+data.content+'</pre>';
+    }
+    document.getElementById('file-preview').innerHTML=html;
+  }catch(e){document.getElementById('file-preview').innerHTML=`<div class="empty">加载失败:${e.message}</div>`}
+}
+
+// =============================================================================
+// 初始化
+// =============================================================================
+loadStatus();
+// 每30秒刷新状态
+setInterval(loadStatus,30000);
+</script>
+</body>
+</html>

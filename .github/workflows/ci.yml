@@ -1,0 +1,161 @@
+name: CI - 主测试流水线
+
+on:
+  push:
+    branches: [main, master, dev]
+    paths:
+      - 'scripts/**'
+      - 'novel-cli.py'
+      - 'mcp_server/**'
+      - '.github/workflows/**'
+  pull_request:
+    branches: [main, master]
+    paths:
+      - 'scripts/**'
+      - 'novel-cli.py'
+      - 'mcp_server/**'
+      - '.github/workflows/**'
+
+permissions:
+  contents: read
+
+jobs:
+  # Job 1: 编译与语法检查
+  compile-check:
+    name: 编译与语法检查
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    strategy:
+      matrix:
+        python-version: ['3.8', '3.9', '3.10', '3.11', '3.12']
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 设置 Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: 编译所有 Python 脚本（语法检查）
+        run: |
+          set -e
+          find . -name "*.py" -not -path "./__pycache__/*" -not -path "*/__pycache__/*" | while read f; do
+            python -m py_compile "$f"
+          done
+          echo "✓ 所有 Python 脚本编译通过"
+
+      - name: 检查脚本 shebang 与可执行权限
+        run: |
+          # 检查 CLI 入口是否有正确的 shebang
+          head -n 1 novel-cli.py | grep -q '^#!/usr/bin/env python' && echo "✓ novel-cli.py shebang 正确"
+          head -n 1 scripts/tests/run_tests.py | grep -q '^#!/usr/bin/env python' && echo "✓ run_tests.py shebang 正确"
+
+  # Job 2: 单元测试
+  unit-tests:
+    name: 单元测试（${{ matrix.python-version }}）
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs: compile-check
+    strategy:
+      matrix:
+        python-version: ['3.8', '3.9', '3.10', '3.11', '3.12']
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 设置 Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: 运行单元测试套件
+        run: |
+          cd "$GITHUB_WORKSPACE"
+          python scripts/tests/run_tests.py
+
+      - name: 上传测试结果（失败时）
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-failures-py${{ matrix.python-version }}
+          path: scripts/tests/
+          retention-days: 7
+
+  # Job 3: 静态代码质量检查
+  static-quality:
+    name: 静态代码质量检查
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    needs: compile-check
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 设置 Python 3.10
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: 代码行数统计
+        run: |
+          echo "=== 代码规模统计 ==="
+          find scripts -name "*.py" | xargs wc -l | tail -n 1
+          echo ""
+          echo "=== 各脚本行数（Top 10）==="
+          find scripts -name "*.py" -exec wc -l {} + | sort -rn | head -n 11
+
+      - name: 检查 TODO/FIXME 遗留项
+        run: |
+          echo "=== TODO/FIXME 检查 ==="
+          count=$(grep -rn "TODO\|FIXME\|XXX\|HACK" scripts/ --include="*.py" | wc -l)
+          echo "发现 $count 个待办项"
+          if [ "$count" -gt 0 ]; then
+            grep -rn "TODO\|FIXME\|XXX\|HACK" scripts/ --include="*.py" | head -n 20
+          fi
+
+      - name: 检查 print 调试语句（非测试文件）
+        run: |
+          echo "=== 调试 print 检查 ==="
+          count=$(grep -rn 'print(' scripts/ --include="*.py" | grep -v test_ | grep -v run_tests.py | grep -v '#.*print(' | wc -l)
+          echo "发现 $count 个 print 语句（非测试文件）"
+          if [ "$count" -gt 0 ]; then
+            grep -rn 'print(' scripts/ --include="*.py" | grep -v test_ | grep -v run_tests.py | grep -v '#.*print(' | head -n 20
+          fi
+
+      - name: 检查硬编码路径
+        run: |
+          echo "=== 硬编码路径检查 ==="
+          grep -rn '/tmp/' scripts/ --include="*.py" | grep -v test_ | grep -v '#.*/tmp/' || echo "✓ 未发现硬编码 /tmp/ 路径"
+
+  # Job 4: SKILL.md 文档完整性检查
+  doc-check:
+    name: 文档完整性检查
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 检查 SKILL.md 基本字段
+        run: |
+          echo "=== SKILL.md 元数据检查 ==="
+          grep -q '^name:' SKILL.md && echo "✓ name 字段存在"
+          grep -q '^description:' SKILL.md && echo "✓ description 字段存在"
+          grep -q '^version:' SKILL.md && echo "✓ version 字段存在"
+          grep -q '^license:' SKILL.md && echo "✓ license 字段存在"
+          grep -q 'Iron Law' SKILL.md && echo "✓ Iron Law 存在"
+
+      - name: 检查参考文档索引完整性
+        run: |
+          echo "=== 参考文档统计 ==="
+          echo "工艺文档: $(ls references/craft/*.md | wc -l) 篇"
+          echo "题材文档: $(ls references/genres/*.md | wc -l) 篇"
+          echo "工作流文档: $(ls references/workflow/*.md | wc -l) 篇"
+          echo "平台文档: $(ls references/platforms/*.md | wc -l) 篇"
+          echo "模板文件: $(ls assets/templates/*.md | wc -l) 个"
+          echo "Agent 定义: $(ls assets/agents/*.md | wc -l) 个"
+
+      - name: 检查题材卡索引一致性
+        run: |
+          echo "=== 题材卡索引检查 ==="
+          indexed=$(grep -c '|' references/genres/INDEX.md || echo 0)
+          total=$(ls references/genres/*.md | grep -v INDEX | grep -v GENRE | wc -l)
+          echo "索引条目: $indexed"
+          echo "题材卡总数: $total"

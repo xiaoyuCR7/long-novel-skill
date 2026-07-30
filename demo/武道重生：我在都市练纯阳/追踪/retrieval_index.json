@@ -1,0 +1,64 @@
+{
+  "version": "2.0.0",
+  "last_updated": "2026-07-30T18:23:09",
+  "total_chapters": 5,
+  "indexed_chapters": 5,
+  "chapters": [
+    {
+      "chapter": 1,
+      "title": "_寒门少年觉醒时",
+      "file": "正文/第001章_寒门少年觉醒时.md",
+      "summary": "",
+      "entities": [],
+      "char_count": 4964,
+      "emotion_tags": [],
+      "content_hash": "35f0fb39f8832298b6dfc27e67ffda6c",
+      "indexed_at": "2026-07-30T18:23:09"
+    },
+    {
+      "chapter": 2,
+      "title": "_第一堂课的羞辱",
+      "file": "正文/第002章_第一堂课的羞辱.md",
+      "summary": "",
+      "entities": [],
+      "char_count": 6213,
+      "emotion_tags": [],
+      "content_hash": "297d0dc9b994491ea8ff693d42f41a2d",
+      "indexed_at": "2026-07-30T18:23:09"
+    },
+    {
+      "chapter": 3,
+      "title": "_深夜的奇遇",
+      "file": "正文/第003章_深夜的奇遇.md",
+      "summary": "",
+      "entities": [],
+      "char_count": 6111,
+      "emotion_tags": [],
+      "content_hash": "f14afb93726eab7d14c0e976544c3676",
+      "indexed_at": "2026-07-30T18:23:09"
+    },
+    {
+      "chapter": 4,
+      "title": "_初试锋芒",
+      "file": "正文/第004章_初试锋芒.md",
+      "summary": "",
+      "entities": [],
+      "char_count": 5547,
+      "emotion_tags": [],
+      "content_hash": "ed645222bc23a04b1b3de307e93abdfc",
+      "indexed_at": "2026-07-30T18:23:09"
+    },
+    {
+      "chapter": 5,
+      "title": "_挑战",
+      "file": "正文/第005章_挑战.md",
+      "summary": "",
+      "entities": [],
+      "char_count": 6167,
+      "emotion_tags": [],
+      "content_hash": "d8205f6a3c4aaa0268804471009fbab8",
+      "indexed_at": "2026-07-30T18:23:09"
+    }
+  ],
+  "entity_map": {}
+}

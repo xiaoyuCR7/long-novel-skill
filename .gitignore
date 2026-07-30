@@ -1,0 +1,125 @@
+# ============================================================
+# Python — Byte-compiled / optimized / DLL files
+# ============================================================
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyd
+
+# Distribution / packaging
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.whl
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# PyInstaller
+*.manifest
+*.spec
+
+# ============================================================
+# Python — Virtual environments
+# ============================================================
+.venv
+venv/
+ENV/
+env/
+env.bak/
+venv.bak/
+.venv.bak/
+
+# ============================================================
+# Python — Testing & coverage
+# ============================================================
+.pytest_cache/
+.coverage
+.coverage.*
+*.cover
+htmlcov/
+.tox/
+.nox/
+.hypothesis/
+
+# ============================================================
+# Python — Linting & type checking
+# ============================================================
+.mypy_cache/
+.dmypy.json
+dmypy.json
+.ruff_cache/
+.pyre/
+.pytype/
+cython_debug/
+
+# ============================================================
+# Python — LLM / API config
+# ============================================================
+.env
+.env.*
+!.env.example
+*.ini.bak
+
+# ============================================================
+# IDE / Editors
+# ============================================================
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+*.bak
+
+# ============================================================
+# OS generated files
+# ============================================================
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+
+# Windows
+Thumbs.db
+ehthumbs.db
+ehthumbs_vista.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# Linux
+*~
+
+# ============================================================
+# Logs & runtime data
+# ============================================================
+*.log
+logs/
+*.pid
+*.seed
+*.pid.lock
+
+# ============================================================
+# Project-specific — local tool caches
+# ============================================================
+.impeccable/
+
+# ============================================================
+# Skill packaging artifacts
+# ============================================================
+*.zip
+*.tar.gz
+*.tar.bz2
+*.tar.xz

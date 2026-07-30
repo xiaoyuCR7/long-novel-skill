@@ -1,0 +1,132 @@
+{
+  "name": "long-novel-skill",
+  "version": "6.3.0",
+  "description": "通用网文创作助手（长篇+短篇）：开书、百万字结构展开、三级大纲、7 Gate去AI腔、节奏三档制、知识图谱、RAG检索、质量评分、编辑团队协作。支持34题材、多平台适配。",
+  "activation": {
+    "patterns": [
+      "/long-novel-skill",
+      "/开书",
+      "/写小说",
+      "/网文"
+    ],
+    "triggers": [
+      "用户想写小说",
+      "用户想写网文",
+      "用户提到开书",
+      "用户提到写大纲",
+      "用户提到写第X章",
+      "用户提到续写",
+      "用户提到日更",
+      "用户提到卡文",
+      "用户提到人设崩了",
+      "用户提到伏笔",
+      "用户提到爽点",
+      "用户提到拆文",
+      "用户提到扫榜",
+      "用户提到仿写",
+      "用户提到投稿平台",
+      "用户提到去AI味",
+      "用户提到脑洞",
+      "用户提到扩充",
+      "用户提到质量评分"
+    ]
+  },
+  "compatibility": {
+    "requires": [
+      "Python 3.8+",
+      "文件系统读写权限"
+    ],
+    "supported_tools": [
+      "claude-code",
+      "trae",
+      "cursor",
+      "opencode",
+      "codex",
+      "gemini-cli",
+      "antigravity",
+      "mcp-client"
+    ],
+    "installer": {
+      "bash": "install.sh",
+      "powershell": "install.ps1"
+    }
+  },
+  "mcp_server": {
+    "enabled": true,
+    "entry": "mcp_server/server.py",
+    "transport": "stdio",
+    "tools_count": 26
+  },
+  "metadata": {
+    "author": "熊小雨",
+    "license": "MIT",
+    "homepage": "https://github.com/xiaoyuCR7/long-novel-skill",
+    "repository": "https://github.com/xiaoyuCR7/long-novel-skill",
+    "created": "2026-07-26",
+    "last_reviewed": "2026-07-30",
+    "review_interval_days": 90,
+    "genre_cards_count": 34,
+    "scripts_count": 31,
+    "tests_count": 744,
+    "craft_files_count": 41,
+    "workflow_files_count": 24
+  },
+  "source_references": [
+    {
+      "name": "novel-creator-skill",
+      "contribution": "五层一致性、Beat Sheet、节奏配额、语义级节奏审查、知识图谱、联网调研、风格库设计",
+      "license": "MIT"
+    },
+    {
+      "name": "oh-story-claudecode",
+      "contribution": "7 Gate、拆文、扫榜、短篇、对话精通、悬念分级、信息团、爆款语料设计",
+      "license": "MIT"
+    }
+  ],
+  "features": {
+    "writing_workflows": [
+      "开书初始化",
+      "三级大纲（总纲/卷纲/章纲）",
+      "单章写作循环",
+      "Beat Sheet多步流水线",
+      "日更批量模式",
+      "全自动写书调度",
+      "短篇五段式"
+    ],
+    "quality_assurance": [
+      "7 Gate去AI腔",
+      "节奏三档制与A/B/C配额",
+      "语义级节奏审查",
+      "质量评分系统（七维加权）",
+      "门禁修复计划"
+    ],
+    "long_form_support": [
+      "百万字结构展开",
+      "大纲锚点配额",
+      "知识图谱",
+      "RAG检索增强",
+      "上下文管理",
+      "伏笔台账追踪"
+    ],
+    "craft_depth": [
+      "读者契约深度理论",
+      "情绪弧线操作手册",
+      "叙事元素卡",
+      "结构技法卡",
+      "情绪模块公式",
+      "智斗构型法",
+      "升级循环法",
+      "多角度强化",
+      "改编法",
+      "三重重复检测"
+    ],
+    "cross_platform": [
+      "Claude Code",
+      "TRAE",
+      "Cursor",
+      "OpenCode",
+      "Codex",
+      "任何MCP客户端"
+    ]
+  }
+}
