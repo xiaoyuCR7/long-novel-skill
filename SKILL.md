@@ -5,7 +5,7 @@ description: >-
   大纲锚点动态约束注入、大纲安全七检与可证伪降级检查、情节点预算制（密/疏+字数求和）、
   单章写作循环、Beat Sheet 多步流水线、日更批量模式（含 fail-fast 五类资料检查）、
   全自动写书调度（plan/run/report + 断点续写）、交互式脑洞引导（5轮收敛+压力测试）、
-  短篇五段式、人物卡与防OOC、角色设计操作手册（三层标签反差+九维人设）、伏笔台账追踪、
+  短篇五段式、短篇结尾句工艺（点睛句/彩蛋句/碎碎念）、人物卡与防OOC、角色设计操作手册（三层标签反差+九维人设）、伏笔台账追踪、
   章节摘要与角色状态管理、7 Gate 去AI腔（含去AI味工程化：量化分级+删除优先+比例上限+白名单+收敛终止）、
   节奏三档制与A/B/C配额、事件矩阵5+1类（含独立冷却+gentle_window+recommend/record）、
   语义级节奏审查（四维度：档位判断+配额语义核查+悬念质量+隐性加速检测）、
@@ -50,20 +50,21 @@ description: >-
   核心脚本测试套件（189 核心单元测试 CI 全量验证，全量 744 测试覆盖 20 个脚本模块）。
   题材规则可插拔（34 题材按需加载，含九件事正文层规范），平台适配番茄/起点/晋江/知乎盐言/番茄短篇。
   当用户想写小说、长篇/短篇网文，或提到开书、写大纲、写第X章、续写、日更、卡文、
-  人设崩了、伏笔、爽点、拆文、扫榜、仿写、投稿平台选择、去AI味、脑洞、扩充、质量评分时触发。
+  人设崩了、伏笔、爽点、拆文、扫榜、仿写、投稿平台选择、去AI味、脑洞、扩充、质量评分、
+  结尾句、点睛句、彩蛋、碎碎念时触发。
 license: MIT
 activation: /long-novel-skill
 compatibility: Requires Python 3.8+ and file system access. Supports Claude Code, TRAE, Cursor, OpenCode, Codex, and any MCP client.
 metadata:
   author: 熊小雨
-  version: 6.3.0
+  version: 6.4.0
   created: 2026-07-26
-  last_reviewed: 2026-07-30
+  last_reviewed: 2026-08-03
   review_interval_days: 90
   mcp_server: mcp_server/server.py
 provenance:
   maintainer: 熊小雨
-  version: 6.3.0
+  version: 6.4.0
   created: 2026-07-26
   source_references:
     - skills/novel-creator-skill（借鉴五层一致性/Beat Sheet/节奏配额/语义级节奏审查/知识图谱/联网调研/风格库设计，未引用内容）
@@ -163,8 +164,12 @@ python scripts/init_book.py "{书名}" --genre 玄幻 --platform 番茄
 
 ### Phase 1S：短篇开篇（短篇）
 
-情绪目标 → 题材风格包 → 平台基调 → 核心框架（一句话梗概+核心反转+情绪设计+人设速写）→ 小节大纲 → 正文。
-详版流程：`references/workflow/short-story-loop.md`。
+情绪目标 → 题材风格包 → 平台基调 → 核心框架（一句话梗概+核心反转+情绪设计+人设速写）→ 小节大纲 → 正文 → **结尾句**。
+详版流程：`references/workflow/short-story-loop.md`（含 Step 7 结尾句）。
+
+**结尾句工艺**：每篇短篇写完**默认加结尾句**（必做步骤）——文末点睛句（正文最后一行，一句话凝住情绪）、
+收尾彩蛋句（正文外一句隐藏信息）、文后碎碎念（作者默认一句、最多两句，按平台适配）。
+结尾句一律**简短**，能一句不多句。详见 `craft/short-story-ending.md`。点睛句不写总结句，与「结尾不升华」铁律不冲突。
 
 ### Phase 2：大纲分级（长篇）
 
@@ -293,6 +298,7 @@ python scripts/outline_anchor.py check "{书名目录}" --chapter {N} --quota A
 | 脑洞/选题 | workflow/ideation.md + workflow/market-scan-deep.md + craft/commercial-core.md |
 | 开书（长篇） | `scripts/init_book.py` 或 workflow/book-init.md + assets/templates/ 全套 + craft/reader-contract.md + craft/reader-contract-deep.md |
 | 开书（短篇） | workflow/short-story-loop.md + 题材风格包 |
+| 短篇结尾句 | craft/short-story-ending.md（点睛句/彩蛋句/碎碎念）+ workflow/short-story-loop.md Step 7 |
 | 做/改大纲 | craft/outline-structure-theory.md（结构选择）→ workflow/outline-system.md（操作落地）→ craft/outline-safety.md（安全七检+可证伪检查）+ craft/plot-budget.md（情节点预算制）+ craft/reader-contract-deep.md |
 | 写复杂章 | workflow/beat-pipeline.md（Beat Sheet）+ `scripts/beat_sheet_generator.py`（分镜生成+扩写+校验）+ `scripts/chapter_synthesizer.py`（合成+过渡检测+润色提示） |
 | 写关键章 | craft/editorial-team.md + workflow/editorial-spawn.md（8步spawn协议）+ assets/agents/ 四个角色定义 + `scripts/editorial_manager.py`（快照/审核记录/状态查询/人工介入检测） |

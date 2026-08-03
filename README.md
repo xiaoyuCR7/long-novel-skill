@@ -1,6 +1,6 @@
 # long-novel-skill
 
-通用网文创作 agent skill（长篇 + 短篇），**v6.3.0**。核心只装通用写作工艺（工作流 + 模板 + 禁区清单），
+通用网文创作 agent skill（长篇 + 短篇），**v6.4.0**。核心只装通用写作工艺（工作流 + 模板 + 禁区清单），
 题材规则（34 题材 + 九件事正文层规范）与平台规则（长篇番茄/起点/晋江 + 短篇知乎盐言/番茄短篇/七猫短篇）
 做成可插拔的参考文件，按需加载。
 
@@ -136,7 +136,7 @@ long-novel-skill/
 │   │   ├── commands.md           # 命令入口表（30个命令+新手/高级分层）（v4.0 新增）
 │   │   ├── revision.md           # 大修流程
 │   │   └── book-scaling.md       # 百万字结构展开
-│   ├── craft/                # 通用写作工艺（v5.0 共 40 个）
+│   ├── craft/                # 通用写作工艺（v5.0 共 40 个；v6.3 增 short-story-ending.md → 44 个）
 │   │   ├── iron-law.md           # 七条铁律
 │   │   ├── anti-ai-style.md      # 7 Gate 去AI腔（判定标准）
 │   │   ├── deslop-engineering.md  # 去AI味工程化（量化分级+删除优先+比例上限+白名单+收敛终止）
@@ -230,6 +230,7 @@ long-novel-skill/
 | 去AI味工程化 | 量化六级分级 + 删除优先 + 比例上限 + 白名单 + 收敛终止 + 三遍法 | `craft/deslop-engineering.md` |
 | Beat Sheet 多步流水线 | 一章拆 4–8 个 Beat 分镜写，末尾节奏预检 | `workflow/beat-pipeline.md`、`templates/beat-sheet.md` |
 | 短篇五段式 | 短篇单篇情绪闭环结构 | `workflow/short-story-loop.md` |
+| **短篇结尾句工艺** | 短篇默认必加：点睛句（正文最后一行，一句话）/ 彩蛋句（一句隐藏信息）/ 碎碎念（默认一句），一律简短 | `craft/short-story-ending.md`、`workflow/short-story-loop.md` Step 7 |
 | 节奏三档制 + A/B/C 配额 + 事件矩阵5+1类 | 慢/中/快三档，6类事件独立冷却+gentle_window+recommend/record | `craft/pacing-and-hooks.md`、`craft/reverse-brake.md`、`scripts/event_matrix.py` |
 | **语义级节奏审查**（v4.0 新增） | 四维度：档位判断+配额语义核查+悬念质量+隐性加速检测，脚本检测不到的由Claude兜底 | `craft/pacing-review.md` |
 | 反向刹车 | 非终局章禁止解决主线核心矛盾 | `craft/reverse-brake.md` |
@@ -315,7 +316,8 @@ cp -R long-novel-skill ~/.agents/skills/
    先跑 `resume.py` 查欠账 → 读章纲 → 节奏预检 → 检索上下文（必要时 `entity_index.py query` / `context_manager.py select`） → 写正文 →
    内容扩充（必要时 `content_expander.py analyze`） → 标点归一化 → 三条机器闸口 → 质量评分（`quality_score.py score`） →
    自查清单 → 更新追踪五文件 → 跑 `validate_tracking.py` 复核 → 重建实体索引。
-3. **写短篇**：「写一篇番茄短篇」→ 按 `workflow/short-story-loop.md` 走短篇五段式。
+3. **写短篇**：「写一篇番茄短篇」→ 按 `workflow/short-story-loop.md` 走短篇五段式，
+   定稿后**默认加结尾句**（简短，一句顶满），按 `craft/short-story-ending.md` 写点睛句/彩蛋句/碎碎念。
 4. **拆文**：「拆解这本对标书」→ 按 `workflow/deconstruct.md` 走，产出存入 `对标/{书名}/`。
 5. **扫榜**：「帮我扫榜看趋势」→ 按 `workflow/market-scan.md` 走，产出存入 `参考资料/扫榜报告.md`。
 6. **带旧稿接手**：「我有几十章旧稿」→ `workflow/import-book.md`。
