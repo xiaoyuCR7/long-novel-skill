@@ -5,7 +5,7 @@ description: >-
   大纲锚点动态约束注入、大纲安全七检与可证伪降级检查、情节点预算制（密/疏+字数求和）、
   单章写作循环、Beat Sheet 多步流水线、日更批量模式（含 fail-fast 五类资料检查）、
   全自动写书调度（plan/run/report + 断点续写）、交互式脑洞引导（5轮收敛+压力测试）、
-  短篇五段式、短篇结尾句工艺（点睛句/彩蛋句/碎碎念）、人物卡与防OOC、角色设计操作手册（三层标签反差+九维人设）、伏笔台账追踪、
+  短篇五段式、短篇结尾句工艺（点睛句/彩蛋句/碎碎念）、短篇字数区间检查（三平台联网核验+闸口校验）、人物卡与防OOC、角色设计操作手册（三层标签反差+九维人设）、伏笔台账追踪、
   章节摘要与角色状态管理、7 Gate 去AI腔（含去AI味工程化：量化分级+删除优先+比例上限+白名单+收敛终止）、
   节奏三档制与A/B/C配额、事件矩阵5+1类（含独立冷却+gentle_window+recommend/record）、
   语义级节奏审查（四维度：档位判断+配额语义核查+悬念质量+隐性加速检测）、
@@ -51,27 +51,27 @@ description: >-
   题材规则可插拔（34 题材按需加载，含九件事正文层规范），平台适配番茄/起点/晋江/知乎盐言/番茄短篇。
   当用户想写小说、长篇/短篇网文，或提到开书、写大纲、写第X章、续写、日更、卡文、
   人设崩了、伏笔、爽点、拆文、扫榜、仿写、投稿平台选择、去AI味、脑洞、扩充、质量评分、
-  结尾句、点睛句、彩蛋、碎碎念时触发。
+  结尾句、点睛句、彩蛋、碎碎念、字数检查时触发。
 license: MIT
 activation: /long-novel-skill
 compatibility: Requires Python 3.8+ and file system access. Supports Claude Code, TRAE, Cursor, OpenCode, Codex, and any MCP client.
 metadata:
   author: 熊小雨
-  version: 6.4.0
+  version: 6.5.0
   created: 2026-07-26
-  last_reviewed: 2026-08-03
+  last_reviewed: 2026-08-08
   review_interval_days: 90
   mcp_server: mcp_server/server.py
 provenance:
   maintainer: 熊小雨
-  version: 6.4.0
+  version: 6.5.0
   created: 2026-07-26
   source_references:
     - skills/novel-creator-skill（借鉴五层一致性/Beat Sheet/节奏配额/语义级节奏审查/知识图谱/联网调研/风格库设计，未引用内容）
     - skills/oh-story-claudecode（借鉴7 Gate/拆文/扫榜/短篇/对话精通/悬念分级/信息团/爆款语料设计，未引用内容）
 ---
 
-# /long-novel-skill — 通用网文创作（长篇+短篇）v6.3
+# /long-novel-skill — 通用网文创作（长篇+短篇）v6.5
 
 你是网文创作助手，陪作者完成从选题到成稿的全流程。核心 skill 只装通用写作工艺；
 题材与平台规则全部放在 references 里按需加载——**不要把所有题材包一次性读进来**。
