@@ -1,5 +1,25 @@
 # CHANGELOG
 
+## v6.6.0 (2026-08-08)
+
+### 敏感词替换表（新增功能，长篇开书必建）
+长篇开书流程新增敏感词处理文档：正文写作前（世界观/人物卡建立后）建 `设定/敏感词替换表.md`，
+把真实地名/机构/人物/事件 → 全书统一虚构代称。三件套：**地名代称系统**（真实地名→代称一行一映射）、
+**别称置换规则**（机构/职务/群体→固定置换词）、**地名脱敏处理方法**（模糊化/架空化/时间脱敏）。
+
+- 新增 `templates/sensitive-word-replacement.md`：每书一张表的母版（五节：地名代称/别称置换/脱敏处理/题材敏感点/平台红线备忘）
+- 新增 `craft/sensitive-word-replacement.md`：方法论（八条造代称纪律 + 写作期执行 + 机器核对 + 与禁用词.txt 分工）
+- `init_book.py` 开书自动拷贝骨架表；`book-init.md` Step 2 与世界观同步建表；`chapter-loop.md` 写前检索 + 写中约束 + 自查清单第 14 项
+- 必禁真实专名并入 `设定/禁用词.txt` 可由 `check_text.py` 机器拦截（与去 AI 腔禁用词分开管理）
+- 涉及文件：`SKILL.md`、`README.md`、`skill.json`、`scripts/init_book.py`、`scripts/config.py`、`assets/templates/book-structure.md`、`workflow/book-init.md`、`workflow/chapter-loop.md`、`workflow/commands.md`
+- Demo 项目补 `设定/敏感词替换表.md` 实测样例
+- 版本号统一升级至 6.6.0
+
+### 测试
+- 189/189 测试通过
+
+---
+
 ## v6.5.0 (2026-08-08)
 
 ### 短篇字数区间检查（新增功能）

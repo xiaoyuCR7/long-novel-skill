@@ -16,6 +16,7 @@
 │   ├── 读者契约.md              # 核心快感/兑现频率/红线（模板：reader-contract.md）
 │   ├── 世界观.md                # 只写「不写就会崩」的核心规则
 │   ├── 文风锚.md                # 六维量化基线 + 样板段落（模板：style-fingerprint.md）
+│   ├── 敏感词替换表.md          # 真实地名/机构/人物 → 全书代称（模板：sensitive-word-replacement.md）
 │   ├── 禁用词.txt               # 题材专属禁用词 + 个人避讳词
 │   └── 角色/
 │       ├── {主角名}.md          # 人物卡，一人一档（模板：character-card.md）

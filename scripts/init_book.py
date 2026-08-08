@@ -8,7 +8,7 @@
 创建内容：
   {书名}/
   ├── 大纲/  正文/  对标/  参考资料/
-  ├── 设定/  题材定位.md、读者契约.md、文风锚.md、禁用词.txt、角色/
+  ├── 设定/  题材定位.md、读者契约.md、文风锚.md、敏感词替换表.md、禁用词.txt、角色/
   ├── 追踪/  伏笔台账.md、角色状态.md、章节摘要.md、时间线.md、节奏配额.md、门禁/
   └── .deslop-whitelist（白名单模板）
 
@@ -43,6 +43,7 @@ SETTING_TEMPLATES = {
     "题材定位.md": "genre-profile.md",
     "读者契约.md": "reader-contract.md",
     "文风锚.md": "style-anchor.md",
+    "敏感词替换表.md": "sensitive-word-replacement.md",
 }
 
 WHITELIST_TEMPLATE = """# 去AI味白名单（每行一个词，# 开头为注释）
@@ -150,8 +151,9 @@ def main():
     print("下一步（按 references/workflow/book-init.md 走）：")
     print("  1. 补全 设定/题材定位.md（一句话卖点/目标字数/更新计划/对标）")
     print("  2. 填 设定/读者契约.md；把题材卡「专属禁用词」拷入 设定/禁用词.txt")
-    print("  3. 建人物卡（设定/角色/）与总纲（大纲/总纲.md）")
-    print("  4. 首批章纲 5–10 章停靠；写第 1 章前用 rhythm_guard.py --declare 预检")
+    print("  3. 建 设定/敏感词替换表.md（真实地名/机构/人物 → 全书代称，见 craft/sensitive-word-replacement.md）")
+    print("  4. 建人物卡（设定/角色/）与总纲（大纲/总纲.md）")
+    print("  5. 首批章纲 5–10 章停靠；写第 1 章前用 rhythm_guard.py --declare 预检")
     return 0
 
 

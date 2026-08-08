@@ -1,6 +1,6 @@
 # long-novel-skill
 
-通用网文创作 agent skill（长篇 + 短篇），**v6.5.0**。核心只装通用写作工艺（工作流 + 模板 + 禁区清单），
+通用网文创作 agent skill（长篇 + 短篇），**v6.6.0**。核心只装通用写作工艺（工作流 + 模板 + 禁区清单），
 题材规则（34 题材 + 九件事正文层规范）与平台规则（长篇番茄/起点/晋江 + 短篇知乎盐言/番茄短篇/七猫短篇）
 做成可插拔的参考文件，按需加载。
 
@@ -136,10 +136,11 @@ long-novel-skill/
 │   │   ├── commands.md           # 命令入口表（30个命令+新手/高级分层）（v4.0 新增）
 │   │   ├── revision.md           # 大修流程
 │   │   └── book-scaling.md       # 百万字结构展开
-│   ├── craft/                # 通用写作工艺（v5.0 共 40 个；v6.3 增 short-story-ending.md → 44 个）
+│   ├── craft/                # 通用写作工艺（v5.0 共 40 个；v6.3 增 short-story-ending.md → 44 个；v6.6 增 sensitive-word-replacement.md → 45 个）
 │   │   ├── iron-law.md           # 七条铁律
 │   │   ├── anti-ai-style.md      # 7 Gate 去AI腔（判定标准）
 │   │   ├── deslop-engineering.md  # 去AI味工程化（量化分级+删除优先+比例上限+白名单+收敛终止）
+│   │   ├── sensitive-word-replacement.md  # 敏感词替换（地名代称/别称置换/地名脱敏）
 │   │   ├── pacing-and-hooks.md   # 节奏三档制 + A/B/C 配额
 │   │   ├── pacing-review.md      # 语义级节奏审查（四维度）（v4.0 新增）
 │   │   ├── reverse-brake.md      # 反向刹车 + 事件冷却
@@ -228,6 +229,7 @@ long-novel-skill/
 | 情节点预算制 | 密/疏三级 + 字数预算求和校验，防注水防过场 | `craft/plot-budget.md` |
 | 单章写作循环 + 7 Gate 去AI腔 | 读上下文→写→闸口→追踪，7 道闸口去 AI 腔 | `workflow/chapter-loop.md`、`craft/anti-ai-style.md` |
 | 去AI味工程化 | 量化六级分级 + 删除优先 + 比例上限 + 白名单 + 收敛终止 + 三遍法 | `craft/deslop-engineering.md` |
+| **敏感词替换表**（v6.6 新增） | 开书必建：真实地名/机构/人物 → 全书代称，地名代称系统 + 别称置换规则 + 地名脱敏处理；必禁专名并入禁用词.txt 机器拦截 | `craft/sensitive-word-replacement.md`、`templates/sensitive-word-replacement.md` |
 | Beat Sheet 多步流水线 | 一章拆 4–8 个 Beat 分镜写，末尾节奏预检 | `workflow/beat-pipeline.md`、`templates/beat-sheet.md` |
 | 短篇五段式 | 短篇单篇情绪闭环结构 | `workflow/short-story-loop.md` |
 | **短篇结尾句工艺** | 短篇默认必加：点睛句（正文最后一行，一句话）/ 彩蛋句（一句隐藏信息）/ 碎碎念（默认一句），一律简短 | `craft/short-story-ending.md`、`workflow/short-story-loop.md` Step 7 |
@@ -310,7 +312,7 @@ cp -R long-novel-skill ~/.agents/skills/
 
 1. **开书**：「开书：男频玄幻，发番茄」→
    先 `python scripts/init_book.py "{书名}" --genre 玄幻 --platform 番茄` 建骨架，
-   再按 `workflow/book-init.md` 走完定位/契约/人物/总纲/卷纲/章纲，
+   再按 `workflow/book-init.md` 走完定位/契约/人物/**敏感词替换表（与世界观同步建，真实地名/机构/人物 → 全书代称）**/总纲/卷纲/章纲，
    落定读者契约与文风锚。
 2. **写章**：「写第 37 章」→ 按 `workflow/chapter-loop.md` 走：
    先跑 `resume.py` 查欠账 → 读章纲 → 节奏预检 → 检索上下文（必要时 `entity_index.py query` / `context_manager.py select`） → 写正文 →

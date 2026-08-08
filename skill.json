@@ -1,7 +1,7 @@
 {
   "name": "long-novel-skill",
-  "version": "6.5.0",
-  "description": "通用网文创作助手（长篇+短篇）：开书、百万字结构展开、三级大纲、7 Gate去AI腔、节奏三档制、知识图谱、RAG检索、质量评分、编辑团队协作。支持34题材、多平台适配。",
+  "version": "6.6.0",
+  "description": "通用网文创作助手（长篇+短篇）：开书、百万字结构展开、三级大纲、7 Gate去AI腔、敏感词替换表（地名代称/别称置换/地名脱敏）、节奏三档制、知识图谱、RAG检索、质量评分、编辑团队协作。支持34题材、多平台适配。",
   "activation": {
     "patterns": [
       "/long-novel-skill",
@@ -33,7 +33,11 @@
       "用户提到点睛句",
       "用户提到彩蛋",
       "用户提到碎碎念",
-      "用户提到字数检查"
+      "用户提到字数检查",
+      "用户提到敏感词",
+      "用户提到脱敏",
+      "用户提到地名代称",
+      "用户提到别称置换"
     ]
   },
   "compatibility": {
@@ -73,7 +77,7 @@
     "genre_cards_count": 34,
     "scripts_count": 31,
     "tests_count": 744,
-    "craft_files_count": 41,
+    "craft_files_count": 42,
     "workflow_files_count": 24
   },
   "source_references": [
