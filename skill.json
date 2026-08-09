@@ -1,6 +1,6 @@
 {
   "name": "long-novel-skill",
-  "version": "6.6.0",
+  "version": "6.7.0",
   "description": "通用网文创作助手（长篇+短篇）：开书、百万字结构展开、三级大纲、7 Gate去AI腔、敏感词替换表（地名代称/别称置换/地名脱敏）、节奏三档制、知识图谱、RAG检索、质量评分、编辑团队协作。支持34题材、多平台适配。",
   "activation": {
     "patterns": [
@@ -72,7 +72,7 @@
     "homepage": "https://github.com/xiaoyuCR7/long-novel-skill",
     "repository": "https://github.com/xiaoyuCR7/long-novel-skill",
     "created": "2026-07-26",
-    "last_reviewed": "2026-08-08",
+    "last_reviewed": "2026-08-09",
     "review_interval_days": 90,
     "genre_cards_count": 34,
     "scripts_count": 31,

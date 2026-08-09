@@ -280,7 +280,7 @@ def extract_chapter_title(outline_text: str) -> str:
 
 def extract_target_chars(outline_text: str) -> int:
     """从章纲中提取目标字数。"""
-    # 匹配 "字数预算：3000-4000字" 或 "目标字数：3000字"
+    # 匹配 "字数预算：2000-3000字" 或 "目标字数：3000字"
     for pattern in [
         r"字数预算[：:]\s*(\d+)\s*[-—~]\s*(\d+)",
         r"目标字数[：:]\s*(\d+)",

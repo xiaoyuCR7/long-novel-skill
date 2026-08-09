@@ -15,7 +15,7 @@ import os
 # Skill 版本
 # =============================================================================
 
-SKILL_VERSION = "6.6.0"
+SKILL_VERSION = "6.7.0"
 SKILL_NAME = "long-novel-skill"
 
 
@@ -89,8 +89,8 @@ OUTLINE_FILE_PATTERN = r"章纲_第(\d+)章"
 
 DEFAULT_MIN_CHARS = _env_int("DEFAULT_MIN_CHARS", 2000)
 DEFAULT_MAX_CHARS = _env_int("DEFAULT_MAX_CHARS", 4500)
-SHORT_STORY_MIN_CHARS = _env_int("SHORT_STORY_MIN_CHARS", 3000)
-SHORT_STORY_MAX_CHARS = _env_int("SHORT_STORY_MAX_CHARS", 15000)
+SHORT_STORY_MIN_CHARS = _env_int("SHORT_STORY_MIN_CHARS", 4000)
+SHORT_STORY_MAX_CHARS = _env_int("SHORT_STORY_MAX_CHARS", 30000)
 
 # =============================================================================
 # 节奏配额

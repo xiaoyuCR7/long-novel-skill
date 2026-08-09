@@ -1,7 +1,7 @@
 # long-novel-skill
 
-通用网文创作 agent skill（长篇 + 短篇），**v6.6.0**。核心只装通用写作工艺（工作流 + 模板 + 禁区清单），
-题材规则（34 题材 + 九件事正文层规范）与平台规则（长篇番茄/起点/晋江 + 短篇知乎盐言/番茄短篇/七猫短篇）
+通用网文创作 agent skill（长篇 + 短篇），**v6.7.0**。核心只装通用写作工艺（工作流 + 模板 + 禁区清单），
+题材规则（34 题材 + 九件事正文层规范）与平台规则（长篇番茄/起点/晋江/飞卢 + 短篇知乎盐言/番茄短篇/七猫短篇）
 做成可插拔的参考文件，按需加载。
 
 v6.1 在 v6.0 基础上新增跨平台支持体系：MCP Server 封装（26 个 Tools 支持任何 MCP 客户端）、
@@ -281,7 +281,7 @@ long-novel-skill/
 | **共享模块**（v6.0 新增） | common.py 工具函数（I/O+文本+章节）+config.py 配置常量（目录+文件名+参数） | `scripts/common.py`、`scripts/config.py` |
 | **核心脚本测试套件**（v6.0 新增，v6.2/v6.3 扩展） | 189 个核心单元测试覆盖 10 个核心脚本（CI 全量验证），全量 744 测试覆盖 20 个脚本模块 | `scripts/tests/run_tests.py` |
 | 题材包可插拔（34题材 + 九件事） | 12栏目设定层 + 九件事正文层 | `genres/INDEX.md`、`genres/GENRE-PROSE-SPEC.md` |
-| 平台适配（长篇+短篇） | 长篇番茄/起点/晋江 + 短篇知乎盐言/番茄短篇/七猫短篇 | `platforms/platform-guide.md` |
+| 平台适配（长篇+短篇） | 长篇番茄/起点/晋江/飞卢 + 短篇知乎盐言/番茄短篇/七猫短篇 | `platforms/platform-guide.md` |
 | 一键开书骨架 | 一条命令建书籍工程目录 + 拷贝模板 | `scripts/init_book.py` |
 | 会话恢复 / 欠账门 | 开工先跑一次，把「写到哪/欠什么账/下一章是什么」说清 | `scripts/resume.py` |
 | 追踪格式校验 | 五个追踪文件的格式 schema 校验 | `scripts/validate_tracking.py` |
@@ -751,9 +751,9 @@ agent 定义文件 + 部署/降级/防死循环协议。
 ## provenance
 
 - maintainer: 熊小雨
-- version: 6.1.0
+- version: 6.7.0
 - created: 2026-07-26
-- last_reviewed: 2026-07-29
+- last_reviewed: 2026-08-09
 - review_interval_days: 90
 - source_references:
   - skills/novel-creator-skill（借鉴五层一致性/Beat Sheet/节奏配额/语义级节奏审查/知识图谱/联网调研/风格库设计，未引用内容）

@@ -48,7 +48,7 @@ description: >-
   CI/CD自动化流水线（GitHub Actions：构建测试/跨平台/发布管理）、
   真实Demo项目（武道重生5章完整样例+全套追踪文件）、
   核心脚本测试套件（189 核心单元测试 CI 全量验证，全量 744 测试覆盖 20 个脚本模块）。
-  题材规则可插拔（34 题材按需加载，含九件事正文层规范），平台适配番茄/起点/晋江/知乎盐言/番茄短篇。
+  题材规则可插拔（34 题材按需加载，含九件事正文层规范），平台适配番茄/起点/晋江/飞卢/知乎盐言/番茄短篇。
   当用户想写小说、长篇/短篇网文，或提到开书、写大纲、写第X章、续写、日更、卡文、
   人设崩了、伏笔、爽点、拆文、扫榜、仿写、投稿平台选择、去AI味、脑洞、扩充、质量评分、
   结尾句、点睛句、彩蛋、碎碎念、字数检查、敏感词、脱敏、地名代称、别称置换时触发。
@@ -57,21 +57,21 @@ activation: /long-novel-skill
 compatibility: Requires Python 3.8+ and file system access. Supports Claude Code, TRAE, Cursor, OpenCode, Codex, and any MCP client.
 metadata:
   author: 熊小雨
-  version: 6.6.0
+  version: 6.7.0
   created: 2026-07-26
-  last_reviewed: 2026-08-08
+  last_reviewed: 2026-08-09
   review_interval_days: 90
   mcp_server: mcp_server/server.py
 provenance:
   maintainer: 熊小雨
-  version: 6.6.0
+  version: 6.7.0
   created: 2026-07-26
   source_references:
     - skills/novel-creator-skill（借鉴五层一致性/Beat Sheet/节奏配额/语义级节奏审查/知识图谱/联网调研/风格库设计，未引用内容）
     - skills/oh-story-claudecode（借鉴7 Gate/拆文/扫榜/短篇/对话精通/悬念分级/信息团/爆款语料设计，未引用内容）
 ---
 
-# /long-novel-skill — 通用网文创作（长篇+短篇）v6.6
+# /long-novel-skill — 通用网文创作（长篇+短篇）v6.7
 
 你是网文创作助手，陪作者完成从选题到成稿的全流程。核心 skill 只装通用写作工艺；
 题材与平台规则全部放在 references 里按需加载——**不要把所有题材包一次性读进来**。
