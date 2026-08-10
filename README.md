@@ -1,6 +1,6 @@
 # long-novel-skill
 
-通用网文创作 agent skill（长篇 + 短篇），**v6.7.0**。核心只装通用写作工艺（工作流 + 模板 + 禁区清单），
+通用网文创作 agent skill（长篇 + 短篇），**v6.8.0**。核心只装通用写作工艺（工作流 + 模板 + 禁区清单），
 题材规则（34 题材 + 九件事正文层规范）与平台规则（长篇番茄/起点/晋江/飞卢 + 短篇知乎盐言/番茄短篇/七猫短篇）
 做成可插拔的参考文件，按需加载。
 
@@ -751,9 +751,9 @@ agent 定义文件 + 部署/降级/防死循环协议。
 ## provenance
 
 - maintainer: 熊小雨
-- version: 6.7.0
+- version: 6.8.0
 - created: 2026-07-26
-- last_reviewed: 2026-08-09
+- last_reviewed: 2026-08-10
 - review_interval_days: 90
 - source_references:
   - skills/novel-creator-skill（借鉴五层一致性/Beat Sheet/节奏配额/语义级节奏审查/知识图谱/联网调研/风格库设计，未引用内容）

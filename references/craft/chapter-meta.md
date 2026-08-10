@@ -185,6 +185,9 @@
 | `from_previous` | string | 前章结尾 → 本章开篇的因果链（如「第N章结尾X→第N+1章开篇Y」） |
 | `to_next` | string | 本章结尾 → 下一章预期的因果链（如「第N+1章结尾X→第N+2章预期Y」） |
 
+衔接设计方法论（因果链三型 / 四类过渡元素 / 动机连贯 / 呼应预示）见
+`references/craft/chapter-junction.md`；两栏内容与 `章节摘要.md` 的「承上 / 启下」一致。
+
 #### hook（章末钩子）
 
 本章章末钩子的类型和强度，用于 `pacing-and-hooks.md` 的钩子追踪。

@@ -5,7 +5,7 @@ description: >-
   大纲锚点动态约束注入、大纲安全七检与可证伪降级检查、情节点预算制（密/疏+字数求和）、
   单章写作循环、Beat Sheet 多步流水线、日更批量模式（含 fail-fast 五类资料检查）、
   全自动写书调度（plan/run/report + 断点续写）、交互式脑洞引导（5轮收敛+压力测试）、
-  短篇五段式、短篇结尾句工艺（点睛句/彩蛋句/碎碎念）、短篇字数区间检查（三平台联网核验+闸口校验）、人物卡与防OOC、角色设计操作手册（三层标签反差+九维人设）、敏感词替换表（地名代称系统+别称置换规则+地名脱敏处理）、伏笔台账追踪、
+  短篇五段式、短篇结尾句工艺（点睛句/彩蛋句/碎碎念）、短篇字数区间检查（三平台联网核验+闸口校验）、人物卡与防OOC、角色设计操作手册（三层标签反差+九维人设）、敏感词替换表（地名代称系统+别称置换规则+地名脱敏处理）、伏笔台账追踪、章节衔接工艺（章间因果链+四类过渡元素+动机连贯+呼应预示+割裂诊断）、
   章节摘要与角色状态管理、7 Gate 去AI腔（含去AI味工程化：量化分级+删除优先+比例上限+白名单+收敛终止）、
   节奏三档制与A/B/C配额、事件矩阵5+1类（含独立冷却+gentle_window+recommend/record）、
   语义级节奏审查（四维度：档位判断+配额语义核查+悬念质量+隐性加速检测）、
@@ -57,21 +57,21 @@ activation: /long-novel-skill
 compatibility: Requires Python 3.8+ and file system access. Supports Claude Code, TRAE, Cursor, OpenCode, Codex, and any MCP client.
 metadata:
   author: 熊小雨
-  version: 6.7.0
+  version: 6.8.0
   created: 2026-07-26
-  last_reviewed: 2026-08-09
+  last_reviewed: 2026-08-10
   review_interval_days: 90
   mcp_server: mcp_server/server.py
 provenance:
   maintainer: 熊小雨
-  version: 6.7.0
+  version: 6.8.0
   created: 2026-07-26
   source_references:
     - skills/novel-creator-skill（借鉴五层一致性/Beat Sheet/节奏配额/语义级节奏审查/知识图谱/联网调研/风格库设计，未引用内容）
     - skills/oh-story-claudecode（借鉴7 Gate/拆文/扫榜/短篇/对话精通/悬念分级/信息团/爆款语料设计，未引用内容）
 ---
 
-# /long-novel-skill — 通用网文创作（长篇+短篇）v6.7
+# /long-novel-skill — 通用网文创作（长篇+短篇）v6.8
 
 你是网文创作助手，陪作者完成从选题到成稿的全流程。核心 skill 只装通用写作工艺；
 题材与平台规则全部放在 references 里按需加载——**不要把所有题材包一次性读进来**。
@@ -314,6 +314,7 @@ python scripts/outline_anchor.py check "{书名目录}" --chapter {N} --quota A
 | 写每一章前 | workflow/chapter-loop.md + workflow/daily-failfast.md（fail-fast五类检查）+ 本章章纲 + 出场人物卡 + 角色状态 + 近 10 章摘要 + 伏笔台账 + 节奏配额 + `scripts/outline_anchor.py inject` + `scripts/entity_index.py semantic`（BM25两级检索）+ `scripts/rag_retriever.py query`（RAG语义检索）+ `scripts/event_matrix.py recommend`（事件推荐）+ `scripts/story_graph.py query`（图谱查询）+ craft/plot-budget.md（字数预算）+ craft/suspense-grading.md（悬念分级）+ craft/information-cluster.md（信息团） |
 | 敏感词替换 | craft/sensitive-word-replacement.md（地名代称/别称置换/地名脱敏）+ 设定/敏感词替换表.md（每书一张表） |
 | 写正文卡工艺 | craft/ 下对应单篇（人设/伏笔/节奏钩子/文风/对话/情绪/反转/开篇/钩子库/打斗装逼/女频/情绪弧线/角色设计/商业核心/悬念分级/信息团）+ `craft/format-and-structure.md` + `craft/corpus-baseline.md`（句长/逗号比基准） |
+| 章间衔接 | craft/chapter-junction.md（章间因果链+四类过渡元素+动机连贯+呼应预示+割裂诊断五病）+ craft/hooks.md（章首7式/章尾13式）+ 章节摘要「承上/启下」两栏 |
 | 写完每一章 | craft/anti-ai-style.md + craft/deslop-engineering.md（去AI味工程化）+ scripts/normalize_punct.py + scripts/check_text.py（--deslop模式）+ scripts/rhythm_guard.py + scripts/event_matrix.py record + **craft/pacing-review.md（语义级节奏审查）** + scripts/validate_tracking.py + scripts/entity_index.py build + scripts/rag_retriever.py build（增量索引）+ scripts/story_graph.py build（每5章）+ craft/gate-artifacts-spec.md（门禁产物规范）+ `scripts/gate_repair.py`（门禁失败时）+ `scripts/hooks.py check-prose`（写后扫描）+ **scripts/static_check.py**（v6.1，跨文件一致性）+ **scripts/benchmark.py eval**（v6.1，质量基线） |
 | 拆文学习 | workflow/deconstruct.md（轻量）+ workflow/deconstruct-pipeline.md（七阶段工业管道）+ workflow/deconstruct-output-spec.md（结构化分目录规范）+ scripts/deconstruct.py + craft/style-profile.md（文风协议） |
 | 扫榜选题 | workflow/market-scan.md + workflow/market-scan-deep.md |
