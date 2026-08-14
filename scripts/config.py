@@ -15,7 +15,7 @@ import os
 # Skill 版本
 # =============================================================================
 
-SKILL_VERSION = "6.8.0"
+SKILL_VERSION = "7.0.0"
 SKILL_NAME = "long-novel-skill"
 
 
@@ -99,6 +99,28 @@ SHORT_STORY_MAX_CHARS = _env_int("SHORT_STORY_MAX_CHARS", 30000)
 RHYTHM_QUOTA_TYPES = ["A", "B", "C"]
 RHYTHM_COOLDOWN_CHAPTERS = _env_int("RHYTHM_COOLDOWN_CHAPTERS", 2)  # A/B/C触发后冷却章数
 MAX_RECENT_CHAPTERS_FOR_QUOTA = _env_int("MAX_RECENT_CHAPTERS_FOR_QUOTA", 3)
+
+# =============================================================================
+# 事件矩阵单一来源（v7.0：收敛 rhythm_guard/event_matrix 两处重复定义）
+# =============================================================================
+# cooldown = 同型事件冷却章数；consecutive_limit = 同型事件连续出现上限；
+# quota = 映射到的 A/B/C 节奏配额（None 表示无映射）。
+# 注意：本表「cooldown」与「节奏配额冷却 RHYTHM_COOLDOWN_CHAPTERS / rhythm_guard.QUOTA_COOLDOWN」
+# 是两个独立概念，不可混用——前者约束同型事件，后者约束 A/B/C 档位节奏。
+EVENT_META = {
+    "conflict": {"name": "冲突爽点", "cooldown": 2, "consecutive_limit": 2, "quota": "A",
+                 "desc": "打脸/对决/爽点爆发"},
+    "bond": {"name": "人物羁绊", "cooldown": 3, "consecutive_limit": 3, "quota": "B",
+             "desc": "师徒/友情/情感深化"},
+    "faction": {"name": "势力经营", "cooldown": 4, "consecutive_limit": 2, "quota": None,
+                "desc": "宗门/势力/组织运作"},
+    "world": {"name": "风土人情", "cooldown": 3, "consecutive_limit": 2, "quota": None,
+              "desc": "世界观/风物/民俗"},
+    "crisis": {"name": "危机升级", "cooldown": 2, "consecutive_limit": 2, "quota": None,
+               "desc": "威胁逼近/压力升级"},
+    "revelation": {"name": "核心秘密", "cooldown": 5, "consecutive_limit": 1, "quota": "C",
+                   "desc": "身世/真相/核心揭秘"},
+}
 
 # =============================================================================
 # 上下文管理（v6.1：动态上下文阶段配置）

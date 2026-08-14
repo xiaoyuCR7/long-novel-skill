@@ -20,33 +20,43 @@ from pydantic import BaseModel, Field, field_validator, ConfigDict
 SCRIPT_DIR = Path(__file__).parent.parent / "scripts"
 sys.path.insert(0, str(SCRIPT_DIR))
 
-# 导入所有脚本功能
-import common
-import config
-from check_text import main as check_text_main
-from style_fingerprint import main as style_fingerprint_main
-from rhythm_guard import main as rhythm_guard_main
-from deconstruct import main as deconstruct_main
-from outline_anchor import main as outline_anchor_main
-from event_matrix import main as event_matrix_main
-from entity_index import main as entity_index_main
-from story_graph import main as story_graph_main
-from research_agent import main as research_agent_main
-from style_library import main as style_library_main
-from content_expander import main as content_expander_main
-from context_manager import main as context_manager_main
-from novel_flow import main as novel_flow_main
-from quality_score import main as quality_score_main
-from beat_sheet_generator import main as beat_sheet_generator_main
-from chapter_synthesizer import main as chapter_synthesizer_main
-from gate_repair import main as gate_repair_main
-from editorial_manager import main as editorial_manager_main
-from hooks import main as hooks_main
-from rag_retriever import main as rag_retriever_main
-from init_book import main as init_book_main
-from resume import main as resume_main
-from normalize_punct import main as normalize_punct_main
-from validate_tracking import main as validate_tracking_main
+import subprocess
+
+try:
+    import config
+    _FLOW_TIMEOUT = getattr(config, "FLOW_SCRIPT_TIMEOUT", 120)
+except ImportError:
+    _FLOW_TIMEOUT = 120
+
+
+def _run_script(name, args, book_dir=None):
+    """以子进程方式运行 scripts/<name>.py，捕获 UTF-8 输出。
+
+    原实现直接 import 各脚本的 main() 并传 args 列表，但所有脚本 main()
+    均为零参（内部 parse_args() 读 sys.argv），导致全部 tool 抛 TypeError。
+    改为子进程分发：一处修复、不改动任何脚本，且 stdout 不会污染 MCP stdio。
+    """
+    script = SCRIPT_DIR / f"{name}.py"
+    if not script.exists():
+        return {"success": False, "error": f"脚本不存在: {name}"}
+    try:
+        r = subprocess.run(
+            [sys.executable, str(script), *args],
+            capture_output=True, text=True,
+            encoding="utf-8", errors="replace",
+            cwd=str(book_dir) if book_dir else None,
+            timeout=_FLOW_TIMEOUT,
+        )
+        return {
+            "success": r.returncode == 0,
+            "exit_code": r.returncode,
+            "stdout": r.stdout,
+            "stderr": r.stderr,
+        }
+    except subprocess.TimeoutExpired:
+        return {"success": False, "error": f"脚本执行超时: {name}"}
+    except Exception as e:
+        return {"success": False, "error": f"脚本执行异常: {e}"}
 
 # 尝试导入mcp
 HAS_MCP = False
@@ -330,8 +340,7 @@ def create_mcp_server():
             if params.deslop:
                 args.append("--deslop")
             
-            result = check_text_main(args)
-            return json.dumps({"success": True, "exit_code": result}, indent=2)
+            return json.dumps(_run_script("check_text", args), indent=2)
         except Exception as e:
             return json.dumps({"success": False, "error": str(e)}, indent=2)
     
@@ -356,8 +365,7 @@ def create_mcp_server():
             if params.output:
                 args.extend(["--output", params.output])
             
-            result = style_fingerprint_main(args)
-            return json.dumps({"success": True, "exit_code": result}, indent=2)
+            return json.dumps(_run_script("style_fingerprint", args), indent=2)
         except Exception as e:
             return json.dumps({"success": False, "error": str(e)}, indent=2)
     
@@ -384,8 +392,7 @@ def create_mcp_server():
             if params.current_chapter:
                 args.extend(["--current-chapter", str(params.current_chapter)])
             
-            result = rhythm_guard_main(args)
-            return json.dumps({"success": True, "exit_code": result}, indent=2)
+            return json.dumps(_run_script("rhythm_guard", args), indent=2)
         except Exception as e:
             return json.dumps({"success": False, "error": str(e)}, indent=2)
     
@@ -410,8 +417,7 @@ def create_mcp_server():
             if params.full_pipeline:
                 args.append("--full-pipeline")
             
-            result = deconstruct_main(args)
-            return json.dumps({"success": True, "exit_code": result}, indent=2)
+            return json.dumps(_run_script("deconstruct", args), indent=2)
         except Exception as e:
             return json.dumps({"success": False, "error": str(e)}, indent=2)
     
@@ -436,8 +442,7 @@ def create_mcp_server():
             if params.quota:
                 args.extend(["--quota", params.quota])
             
-            result = outline_anchor_main(args)
-            return json.dumps({"success": True, "exit_code": result}, indent=2)
+            return json.dumps(_run_script("outline_anchor", args), indent=2)
         except Exception as e:
             return json.dumps({"success": False, "error": str(e)}, indent=2)
     
@@ -462,8 +467,7 @@ def create_mcp_server():
             if params.chapter:
                 args.extend(["--chapter", str(params.chapter)])
             
-            result = event_matrix_main(args)
-            return json.dumps({"success": True, "exit_code": result}, indent=2)
+            return json.dumps(_run_script("event_matrix", args), indent=2)
         except Exception as e:
             return json.dumps({"success": False, "error": str(e)}, indent=2)
     
@@ -486,8 +490,7 @@ def create_mcp_server():
             if params.query:
                 args.extend(["--query", params.query])
             
-            result = entity_index_main(args)
-            return json.dumps({"success": True, "exit_code": result}, indent=2)
+            return json.dumps(_run_script("entity_index", args), indent=2)
         except Exception as e:
             return json.dumps({"success": False, "error": str(e)}, indent=2)
     
@@ -510,8 +513,7 @@ def create_mcp_server():
             if params.node:
                 args.extend(["--node", params.node])
             
-            result = story_graph_main(args)
-            return json.dumps({"success": True, "exit_code": result}, indent=2)
+            return json.dumps(_run_script("story_graph", args), indent=2)
         except Exception as e:
             return json.dumps({"success": False, "error": str(e)}, indent=2)
     
@@ -540,8 +542,7 @@ def create_mcp_server():
             if params.topic:
                 args.extend(["--topic", params.topic])
             
-            result = research_agent_main(args)
-            return json.dumps({"success": True, "exit_code": result}, indent=2)
+            return json.dumps(_run_script("research_agent", args), indent=2)
         except Exception as e:
             return json.dumps({"success": False, "error": str(e)}, indent=2)
     
@@ -568,8 +569,7 @@ def create_mcp_server():
             if params.style_id:
                 args.extend(["--style-id", params.style_id])
             
-            result = style_library_main(args)
-            return json.dumps({"success": True, "exit_code": result}, indent=2)
+            return json.dumps(_run_script("style_library", args), indent=2)
         except Exception as e:
             return json.dumps({"success": False, "error": str(e)}, indent=2)
     
@@ -592,8 +592,7 @@ def create_mcp_server():
             if params.target_chars:
                 args.extend(["--target-chars", str(params.target_chars)])
             
-            result = content_expander_main(args)
-            return json.dumps({"success": True, "exit_code": result}, indent=2)
+            return json.dumps(_run_script("content_expander", args), indent=2)
         except Exception as e:
             return json.dumps({"success": False, "error": str(e)}, indent=2)
     
@@ -614,8 +613,7 @@ def create_mcp_server():
         try:
             args = [params.action, str(params.chapter), "--book-dir", params.book_dir]
             
-            result = context_manager_main(args)
-            return json.dumps({"success": True, "exit_code": result}, indent=2)
+            return json.dumps(_run_script("context_manager", args), indent=2)
         except Exception as e:
             return json.dumps({"success": False, "error": str(e)}, indent=2)
     
@@ -638,8 +636,7 @@ def create_mcp_server():
             if params.chapters:
                 args.extend(["--chapters", str(params.chapters)])
             
-            result = novel_flow_main(args)
-            return json.dumps({"success": True, "exit_code": result}, indent=2)
+            return json.dumps(_run_script("novel_flow", args), indent=2)
         except Exception as e:
             return json.dumps({"success": False, "error": str(e)}, indent=2)
     
@@ -660,8 +657,7 @@ def create_mcp_server():
         try:
             args = [params.action, params.chapter_file, "--chapter", str(params.chapter), "--book-dir", params.book_dir]
             
-            result = quality_score_main(args)
-            return json.dumps({"success": True, "exit_code": result}, indent=2)
+            return json.dumps(_run_script("quality_score", args), indent=2)
         except Exception as e:
             return json.dumps({"success": False, "error": str(e)}, indent=2)
     
@@ -682,8 +678,7 @@ def create_mcp_server():
         try:
             args = [params.action, params.book_dir, "--chapter", str(params.chapter)]
             
-            result = beat_sheet_generator_main(args)
-            return json.dumps({"success": True, "exit_code": result}, indent=2)
+            return json.dumps(_run_script("beat_sheet_generator", args), indent=2)
         except Exception as e:
             return json.dumps({"success": False, "error": str(e)}, indent=2)
     
@@ -704,8 +699,7 @@ def create_mcp_server():
         try:
             args = [params.book_dir, "--chapter", str(params.chapter)]
             
-            result = chapter_synthesizer_main(args)
-            return json.dumps({"success": True, "exit_code": result}, indent=2)
+            return json.dumps(_run_script("chapter_synthesizer", args), indent=2)
         except Exception as e:
             return json.dumps({"success": False, "error": str(e)}, indent=2)
     
@@ -726,8 +720,7 @@ def create_mcp_server():
         try:
             args = [params.book_dir, "--chapter", str(params.chapter)]
             
-            result = gate_repair_main(args)
-            return json.dumps({"success": True, "exit_code": result}, indent=2)
+            return json.dumps(_run_script("gate_repair", args), indent=2)
         except Exception as e:
             return json.dumps({"success": False, "error": str(e)}, indent=2)
     
@@ -750,8 +743,7 @@ def create_mcp_server():
             if params.chapter:
                 args.extend(["--chapter", str(params.chapter)])
             
-            result = editorial_manager_main(args)
-            return json.dumps({"success": True, "exit_code": result}, indent=2)
+            return json.dumps(_run_script("editorial_manager", args), indent=2)
         except Exception as e:
             return json.dumps({"success": False, "error": str(e)}, indent=2)
     
@@ -776,8 +768,7 @@ def create_mcp_server():
             if params.file:
                 args.extend(["--file", params.file])
             
-            result = hooks_main(args)
-            return json.dumps({"success": True, "exit_code": result}, indent=2)
+            return json.dumps(_run_script("hooks", args), indent=2)
         except Exception as e:
             return json.dumps({"success": False, "error": str(e)}, indent=2)
     
@@ -801,8 +792,7 @@ def create_mcp_server():
                 args.extend(["--query", params.query])
             args.extend(["--top", str(params.top)])
             
-            result = rag_retriever_main(args)
-            return json.dumps({"success": True, "exit_code": result}, indent=2)
+            return json.dumps(_run_script("rag_retriever", args), indent=2)
         except Exception as e:
             return json.dumps({"success": False, "error": str(e)}, indent=2)
     
@@ -823,8 +813,7 @@ def create_mcp_server():
         try:
             args = [params.title, "--genre", params.genre, "--platform", params.platform]
             
-            result = init_book_main(args)
-            return json.dumps({"success": True, "exit_code": result}, indent=2)
+            return json.dumps(_run_script("init_book", args), indent=2)
         except Exception as e:
             return json.dumps({"success": False, "error": str(e)}, indent=2)
     
@@ -845,8 +834,7 @@ def create_mcp_server():
         try:
             args = [params.book_dir]
             
-            result = resume_main(args)
-            return json.dumps({"success": True, "exit_code": result}, indent=2)
+            return json.dumps(_run_script("resume", args), indent=2)
         except Exception as e:
             return json.dumps({"success": False, "error": str(e)}, indent=2)
     
@@ -869,8 +857,7 @@ def create_mcp_server():
             if params.check:
                 args.append("--check")
             
-            result = normalize_punct_main(args)
-            return json.dumps({"success": True, "exit_code": result}, indent=2)
+            return json.dumps(_run_script("normalize_punct", args), indent=2)
         except Exception as e:
             return json.dumps({"success": False, "error": str(e)}, indent=2)
     
@@ -891,8 +878,7 @@ def create_mcp_server():
         try:
             args = [params.book_dir]
             
-            result = validate_tracking_main(args)
-            return json.dumps({"success": True, "exit_code": result}, indent=2)
+            return json.dumps(_run_script("validate_tracking", args), indent=2)
         except Exception as e:
             return json.dumps({"success": False, "error": str(e)}, indent=2)
     

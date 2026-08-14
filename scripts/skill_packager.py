@@ -577,6 +577,12 @@ def _generate_vscode_snippets(plugin_dir: Path, skill_root: Path):
 # =============================================================================
 
 def main():
+    # Windows 中文控制台默认 GBK 输出，在 Git Bash 等 UTF-8 终端下会乱码；统一按 UTF-8 输出
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")
+        except (AttributeError, OSError):
+            pass
     ap = argparse.ArgumentParser(
         description="微Skill打包器 + 多平台Plugin生成器",
         formatter_class=argparse.RawDescriptionHelpFormatter,

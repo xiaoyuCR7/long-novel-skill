@@ -567,7 +567,7 @@ class TestCLIScore(unittest.TestCase):
         result = subprocess.run(
             [sys.executable, str(self.script), "score",
              str(self.chapter_path), "--chapter", "1"],
-            capture_output=True, text=True, timeout=30,
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30,
         )
         self.assertEqual(result.returncode, 0,
                          f"score 应成功退出，stderr: {result.stderr}")
@@ -583,7 +583,7 @@ class TestCLIScore(unittest.TestCase):
             [sys.executable, str(self.script), "score",
              str(self.chapter_path), "--chapter", "1",
              "--book-dir", str(self.book_dir)],
-            capture_output=True, text=True, timeout=30,
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30,
         )
         self.assertEqual(result.returncode, 0,
                          f"score 应成功退出，stderr: {result.stderr}")
@@ -598,7 +598,7 @@ class TestCLIScore(unittest.TestCase):
         result = subprocess.run(
             [sys.executable, str(self.script), "score",
              str(self.tmpdir / "不存在.md"), "--chapter", "1"],
-            capture_output=True, text=True, timeout=30,
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30,
         )
         self.assertEqual(result.returncode, 2)
         self.assertIn("error", result.stderr)
@@ -609,7 +609,7 @@ class TestCLIScore(unittest.TestCase):
             [sys.executable, str(self.script), "score",
              str(self.chapter_path), "--chapter", "1",
              "--markdown"],
-            capture_output=True, text=True, timeout=30,
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30,
         )
         self.assertEqual(result.returncode, 0,
                          f"score --markdown 应成功退出，stderr: {result.stderr}")
@@ -623,7 +623,7 @@ class TestCLIScore(unittest.TestCase):
         result = subprocess.run(
             [sys.executable, str(self.script), "score",
              str(bad_path), "--chapter", "2"],
-            capture_output=True, text=True, timeout=30,
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30,
         )
         self.assertEqual(result.returncode, 1,
                          "低质量文本应返回退出码 1（未通过阈值）")
@@ -633,7 +633,7 @@ class TestCLIScore(unittest.TestCase):
         result = subprocess.run(
             [sys.executable, str(self.script), "score",
              str(self.chapter_path), "--chapter", "37"],
-            capture_output=True, text=True, timeout=30,
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30,
         )
         self.assertEqual(result.returncode, 0,
                          f"score 应成功退出，stderr: {result.stderr}")

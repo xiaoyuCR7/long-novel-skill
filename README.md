@@ -1,15 +1,15 @@
 # long-novel-skill
 
-通用网文创作 agent skill（长篇 + 短篇），**v6.8.0**。核心只装通用写作工艺（工作流 + 模板 + 禁区清单），
+通用网文创作 agent skill（长篇 + 短篇），**v7.0.0**。核心只装通用写作工艺（工作流 + 模板 + 禁区清单），
 题材规则（34 题材 + 九件事正文层规范）与平台规则（长篇番茄/起点/晋江/飞卢 + 短篇知乎盐言/番茄短篇/七猫短篇）
 做成可插拔的参考文件，按需加载。
 
-v6.1 在 v6.0 基础上新增跨平台支持体系：MCP Server 封装（26 个 Tools 支持任何 MCP 客户端）、
+v6.1 在 v6.0 基础上新增跨平台支持体系：MCP Server 封装（24 个 Tools 支持任何 MCP 客户端）、
 跨平台安装脚本（install.sh/install.ps1 支持 Claude Code/TRAE/Cursor/Codex/OpenCode/Gemini CLI/Antigravity）、
 skill.json 跨平台技能定义文件、TRAE Agent 部署路径适配。一次封装，全平台通用。
 
 v6.0 在 v5.0 基础上新增 Beat Sheet 生成器、章节合成器、门禁修复计划、编辑团队状态管理器、自动化 Hook 机制、
-RAG 检索增强六大核心脚本，并补齐共享工具模块（common.py + config.py）与核心脚本测试套件（189 个核心单元测试，CI 全量验证），
+RAG 检索增强六大核心脚本，并补齐共享工具模块（common.py + config.py）与核心脚本测试套件（744 个单元测试，默认全量验证），
 新增拆文产出结构化分目录规范工艺文件，题材卡扩展至 34 张，新增：
 Beat Sheet 生成器（分镜表自动拆分+五维扩写+合成校验）、
 章节合成器（Beat 拼接+过渡检测+质量校验+润色提示）、
@@ -18,7 +18,7 @@ Beat Sheet 生成器（分镜表自动拆分+五维扩写+合成校验）、
 自动化 Hook 机制（5 个 Hook：session-start/guard-outline/check-prose/detect-gaps/pre-compact）、
 RAG 检索增强（BM25 两级+增量索引+查询缓存+轻场景跳过+命中可解释+写前上下文建议）、
 共享模块（common.py 工具函数+config.py 配置常量）、
-核心脚本测试套件（189 个核心单元测试覆盖 10 个核心脚本）。
+核心脚本测试套件（744 个单元测试覆盖 20 个脚本模块）。
 
 v5.0 在 v4.1 基础上新增智能内容扩充引擎、长篇上下文管理器、统一流程执行器、质量评分系统四大量化工具体系，
 补齐身体细节替代情绪词、特殊题材处理、题材公式、全流程质量检查清单四类工艺文档，全面超越两个开源 skill，新增：
@@ -178,7 +178,7 @@ long-novel-skill/
 │   ├── agents/               # 编辑团队可部署资产（4 个角色 + README）
 │   └── style_library/        # 风格库（跨书复用）（v4.0 新增）
 │       └── index.json         # 风格库索引
-└── scripts/                  # 机械闸口与量化工具（纯标准库，无第三方依赖，v6.0 共 26 个）
+└── scripts/                  # 机械闸口与量化工具（纯标准库，无第三方依赖，共 39 个）
     ├── common.py                 # 共享工具函数（文件I/O+文本处理+章节解析）（v6.0 新增）
     ├── config.py                 # 全局配置常量（目录结构+文件名+BM25参数）（v6.0 新增）
     ├── check_text.py             # 7 Gate + 字数 + 禁用词 + 毒句式 + 伏笔超期 + 量化打分 + 7类AI模式检测 + --deslop分级 + --whitelist
@@ -205,7 +205,7 @@ long-novel-skill/
     ├── editorial_manager.py      # 编辑团队状态管理器（snapshot/record-review/status/need-human）（v6.0 新增）
     ├── hooks.py                  # 自动化Hook机制（5个Hook）（v6.0 新增）
     ├── rag_retriever.py          # RAG检索增强（build/query/status）（v6.0 新增）
-    └── tests/                    # 核心脚本单元测试套件（189个核心测试，10个脚本；全量744测试覆盖20个脚本）（v6.0 新增，v6.2/v6.3 扩展）
+    └── tests/                    # 单元测试套件（744 测试覆盖 20 个模块，v7.0 起默认全量运行）（v6.0 新增，v6.2/v6.3 扩展）
         ├── run_tests.py              # 测试运行器
         ├── test_common.py            # common.py（36）
         ├── test_config.py            # config.py（14）
@@ -279,7 +279,7 @@ long-novel-skill/
 | **自动化 Hook 机制**（v6.0 新增） | 5 个 Hook：session-start/guard-outline/check-prose/detect-gaps/pre-compact | `scripts/hooks.py` |
 | **RAG 检索增强**（v6.0 新增） | BM25 两级+增量索引+查询缓存+轻场景跳过+命中可解释+写前上下文建议 | `scripts/rag_retriever.py` |
 | **共享模块**（v6.0 新增） | common.py 工具函数（I/O+文本+章节）+config.py 配置常量（目录+文件名+参数） | `scripts/common.py`、`scripts/config.py` |
-| **核心脚本测试套件**（v6.0 新增，v6.2/v6.3 扩展） | 189 个核心单元测试覆盖 10 个核心脚本（CI 全量验证），全量 744 测试覆盖 20 个脚本模块 | `scripts/tests/run_tests.py` |
+| **核心脚本测试套件**（v6.0 新增，v6.2/v6.3 扩展） | 744 个单元测试覆盖 20 个脚本模块（默认全量运行） | `scripts/tests/run_tests.py` |
 | 题材包可插拔（34题材 + 九件事） | 12栏目设定层 + 九件事正文层 | `genres/INDEX.md`、`genres/GENRE-PROSE-SPEC.md` |
 | 平台适配（长篇+短篇） | 长篇番茄/起点/晋江/飞卢 + 短篇知乎盐言/番茄短篇/七猫短篇 | `platforms/platform-guide.md` |
 | 一键开书骨架 | 一条命令建书籍工程目录 + 拷贝模板 | `scripts/init_book.py` |
@@ -669,6 +669,18 @@ python scripts/hooks.py pre-compact "{书名目录}"
 
 五个自动化 Hook，适配本 skill 四目录文件结构（正文/大纲/追踪/设定）：session-start（进度快照）、guard-outline（大纲存在性校验）、check-prose（正文轻量扫描，含毒句式 + 元信息泄漏）、detect-gaps（设定缺口检测）、pre-compact（压缩前快照）。
 
+**机械部署（v7.0 新增，Claude Code）**：hooks.py 的上述子命令原靠模型自觉调用，v7.0 起提供平台级机械强制——`hook_entry.py`（事件分发器）+ `deploy_hooks.py`（settings.json 注册器）：
+
+```bash
+# 在书籍工程目录内执行，把 4 类 hook 注册进 .claude/settings.json（幂等，自动备份）
+python scripts/deploy_hooks.py "{书名目录}"
+
+# 卸载
+python scripts/deploy_hooks.py "{书名目录}" --uninstall
+```
+
+注册后，PreToolUse 在「无章纲写正文」时平台级阻断（exit 2），PostToolUse 在「毒句式欠账未清」时阻断，SessionStart/PreCompact 自动做进度/压缩前快照。全程 fail-open（Python/脚本缺失、无法定位书目录时静默放行），正文文件含 `<!-- lns:skip -->` 时跳过检查。多书切换可用 `LNS_BOOK_DIR` 环境变量或项目根 `.active-book` 指定活跃书。
+
 ### 25. rag_retriever.py — RAG 检索增强（v6.0 新增）
 
 ```bash
@@ -705,7 +717,7 @@ from config import SKILL_VERSION, BOOK_DIRS, TRACKING_FILES, SETTING_FILES
 
 ## 测试套件（scripts/tests/，v6.0 新增）
 
-`scripts/tests/` 是核心脚本的单元测试套件，纯标准库（unittest）。**189 个核心测试覆盖 10 个核心脚本**（CI 流水线全量验证，5 个 Python 版本 × 3 平台），全量 **744 个测试覆盖 20 个脚本模块**：
+`scripts/tests/` 是核心脚本的单元测试套件，纯标准库（unittest）。**744 个测试覆盖 20 个脚本模块**（默认全量运行，CI 流水线 5 个 Python 版本 × 3 平台验证）：
 
 - `test_common.py`（36）— common.py 共享工具函数
 - `test_config.py`（14）— config.py 配置常量
@@ -726,7 +738,7 @@ python scripts/tests/run_tests.py
 python scripts/tests/run_tests.py test_common test_check_text
 ```
 
-`run_tests.py` 是测试运行器，输出形如 `test_common.py ............... 36/36 通过` 的进度行，末尾汇总 `总计：189/189 通过`。退出码 0 全通过 / 1 有失败 / 2 参数错误。
+`run_tests.py` 是测试运行器，输出形如 `test_common.py ............... 36/36 通过` 的进度行，末尾汇总 `总计：744/744 通过`。退出码 0 全通过 / 1 有失败 / 2 参数错误。
 
 ## 编辑团队（assets/agents/，v2.1 新增）
 
@@ -751,7 +763,7 @@ agent 定义文件 + 部署/降级/防死循环协议。
 ## provenance
 
 - maintainer: 熊小雨
-- version: 6.8.0
+- version: 7.0.0
 - created: 2026-07-26
 - last_reviewed: 2026-08-10
 - review_interval_days: 90

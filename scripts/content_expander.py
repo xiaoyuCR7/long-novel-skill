@@ -1295,6 +1295,12 @@ def generate_expansion_plan(analysis: Dict[str, Any]) -> str:
 # =========================================================
 
 def main():
+    # Windows 中文控制台默认 GBK 输出，在 Git Bash 等 UTF-8 终端下会乱码；统一按 UTF-8 输出
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")
+        except (AttributeError, OSError):
+            pass
     parser = argparse.ArgumentParser(
         description="智能内容扩充引擎 v2.0 — 分析章节并给出结构化扩充建议",
         formatter_class=argparse.RawDescriptionHelpFormatter,

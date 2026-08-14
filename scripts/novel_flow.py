@@ -59,12 +59,15 @@ _SCRIPT_DIR = Path(__file__).parent
 sys.path.insert(0, str(_SCRIPT_DIR))
 try:
     from config import (FLOW_LOCK_FILE, FLOW_SNAPSHOT_DIR,
-                        FLOW_SNAPSHOT_MAX_KEEP, FLOW_SCRIPT_TIMEOUT)
+                        FLOW_SNAPSHOT_MAX_KEEP, FLOW_SCRIPT_TIMEOUT,
+                        DEFAULT_MIN_CHARS, DEFAULT_MAX_CHARS)
 except ImportError:
     FLOW_LOCK_FILE = "追踪/.flow_lock.json"
     FLOW_SNAPSHOT_DIR = "追踪/.snapshots"
     FLOW_SNAPSHOT_MAX_KEEP = 10
     FLOW_SCRIPT_TIMEOUT = 120
+    DEFAULT_MIN_CHARS = 2000
+    DEFAULT_MAX_CHARS = 4500
 
 # 需要备份的追踪文件列表
 SNAPSHOT_TRACKING_FILES = [
@@ -95,7 +98,7 @@ def find_book_dir(path: str) -> Optional[Path]:
 
 def read_file_safe(path: Path) -> str:
     try:
-        return path.read_text(encoding="utf-8")
+        return path.read_text(encoding="utf-8-sig", errors="replace")
     except Exception:
         return ""
 
@@ -112,8 +115,10 @@ def run_script(script_name: str, args: List[str], book_dir: Optional[Path] = Non
             cmd,
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             cwd=str(book_dir) if book_dir else None,
-            timeout=60,
+            timeout=FLOW_SCRIPT_TIMEOUT,
         )
         return result.returncode, result.stdout, result.stderr
     except subprocess.TimeoutExpired:
@@ -135,6 +140,18 @@ def find_latest_chapter(book_dir: Path) -> int:
             if ch > max_ch:
                 max_ch = ch
     return max_ch
+
+
+def _find_chapter_file(book_dir: Path, chapter: int) -> Optional[Path]:
+    """定位第 chapter 章正文文件（兼容 第NNN章_标题.md / 第N章_标题.md 命名）。"""
+    text_dir = book_dir / "正文"
+    if not text_dir.exists():
+        return None
+    for f in text_dir.glob("第*章*.md"):
+        m = re.search(r"第0*(\d+)章", f.name)
+        if m and int(m.group(1)) == chapter:
+            return f
+    return None
 
 
 def find_next_chapter_outline(book_dir: Path, current_ch: int) -> Optional[int]:
@@ -708,10 +725,9 @@ def _cmd_check_inner(book_dir: Path, chapter: int, chapter_file: str) -> Dict[st
     })
 
     # Step 2: 机器闸口
-    min_chars = args_min_chars if 'args_min_chars' in globals() else 2000
     rc, stdout, stderr = run_script(
         "check_text.py",
-        [chapter_file, "--min-chars", "2000", "--max-chars", "4500",
+        [chapter_file, "--min-chars", str(DEFAULT_MIN_CHARS), "--max-chars", str(DEFAULT_MAX_CHARS),
          "--ledger", str(book_dir / "追踪" / "伏笔台账.md"),
          "--current-chapter", str(chapter),
          "--gate-report"],
@@ -962,7 +978,59 @@ def cmd_daily(book_dir: Path, num_chapters: int) -> Dict[str, Any]:
 # CLI
 # =========================================================
 
+def cmd_write(book_dir: Path, chapter: int, args) -> Dict[str, Any]:
+    """write 命令 — 单章写作流程编排（prepare → [Agent写] → check → track）。
+
+    机械部分（准备/检查/追踪）在一个锁内进程内串联，正文写作仍由 Agent 执行——
+    编排器只做确定性闸口，不冒充写正文。
+    """
+    result = {"chapter": chapter, "status": "pending"}
+
+    ok, err = acquire_lock(book_dir, "write", chapter)
+    if not ok:
+        result["error"] = err
+        return result
+
+    try:
+        # 1. 写前准备
+        prep = _cmd_prepare_inner(book_dir, chapter, args)
+        result["prepare_ready"] = prep.get("all_ready", False)
+        result["prepare_steps"] = len(prep.get("steps", []))
+        if not prep.get("all_ready"):
+            result["status"] = "prepare_failed"
+            result["error"] = "写前准备失败"
+            return result
+
+        # 2. 写作（由 Agent 执行，此处仅定位正文文件）
+        chapter_file = _find_chapter_file(book_dir, chapter)
+        if chapter_file is None:
+            result["status"] = "waiting_for_agent"
+            result["message"] = f"等待 Agent 写第{chapter}章正文"
+            return result
+
+        # 3. 写后检查
+        check = _cmd_check_inner(book_dir, chapter, str(chapter_file))
+        result["check_passed"] = check.get("all_passed", False)
+        if not check.get("all_passed"):
+            result["status"] = "check_failed"
+            return result
+
+        # 4. 追踪更新
+        track = cmd_track(book_dir, chapter)
+        result["track_done"] = track.get("all_done", False)
+        result["status"] = "completed"
+        return result
+    finally:
+        release_lock(book_dir)
+
+
 def main():
+    # Windows 中文控制台默认 GBK 输出，在 Git Bash 等 UTF-8 终端下会乱码；统一按 UTF-8 输出
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")
+        except (AttributeError, OSError):
+            pass
     parser = argparse.ArgumentParser(
         description="统一流程执行器 — 编排写作工作流（v1.1 幂等回滚）",
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -999,6 +1067,13 @@ def main():
     p_daily.add_argument("book_dir", help="书籍工程目录")
     p_daily.add_argument("--chapters", type=int, default=3, help="目标章数")
     p_daily.add_argument("--json", action="store_true")
+
+    # write
+    p_write = sub.add_parser("write", help="单章写作流程编排（prepare→check→track）")
+    p_write.add_argument("book_dir", help="书籍工程目录")
+    p_write.add_argument("--chapter", type=int, required=True)
+    p_write.add_argument("--quota", choices=["A", "B", "C"], help="A/B/C配额预声明")
+    p_write.add_argument("--json", action="store_true")
 
     # report
     p_report = sub.add_parser("report", help="进度报告")
@@ -1091,6 +1166,32 @@ def main():
             for step in result["steps"]:
                 status = "✅" if step["success"] else "❌"
                 print(f"{status} {step['name']}")
+
+    elif args.command == "write":
+        book_dir = find_book_dir(args.book_dir)
+        if not book_dir:
+            print(f"错误：未找到书籍工程", file=sys.stderr)
+            sys.exit(1)
+        result = cmd_write(book_dir, args.chapter, args)
+        if result.get("error"):
+            print(f"错误：{result['error']}", file=sys.stderr)
+            sys.exit(1)
+        if args.json:
+            print(json.dumps(result, ensure_ascii=False, indent=2))
+        else:
+            print(f"=== 单章写作 — 第{args.chapter}章 ===")
+            print(f"准备：{'✅' if result.get('prepare_ready') else '❌'}")
+            if result["status"] == "check_failed":
+                print(f"检查：❌")
+            elif result.get("check_passed"):
+                print(f"检查：✅")
+            else:
+                print(f"检查：—")
+            if result.get("track_done"):
+                print(f"追踪：✅")
+            print(f"状态：{result['status']}")
+            if result.get("message"):
+                print(result["message"])
 
     elif args.command == "daily":
         book_dir = find_book_dir(args.book_dir)

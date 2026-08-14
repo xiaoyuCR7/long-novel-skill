@@ -27,12 +27,18 @@ import json
 import os
 import re
 import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).parent))
+try:
+    from config import MAX_REWRITE_ROUNDS, MAX_CONDITIONAL_CHAPTERS
+except ImportError:
+    MAX_REWRITE_ROUNDS = 2
+    MAX_CONDITIONAL_CHAPTERS = 3
 
 CHAPTER_FILE_RE = re.compile(r"第\s*(\d+)\s*章")
 
-# ── 防死循环阈值（与 editorial-spawn.md 一致） ──────────────────────────
-MAX_REWRITE_ROUNDS = 2          # 单章返工上限（第 3 轮仍有 P0 → 人工）
-MAX_CONDITIONAL_CHAPTERS = 3    # 连续条件通过章数上限
+# ── 防死循环阈值（单一来源 config.py，支持 LNS_* 环境变量覆盖；与 editorial-spawn.md 一致） ──
 
 
 # ── 工具函数 ────────────────────────────────────────────────────────────────

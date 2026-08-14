@@ -45,35 +45,38 @@ for stream in (sys.stdout, sys.stderr):
     except (AttributeError, OSError):
         pass
 
-# 事件类型定义
+# 事件类型定义（单一来源 config.EVENT_META，失败回退内联常量）
 EVENT_TYPES = ["conflict", "bond", "faction", "world", "crisis", "revelation"]
 
-EVENT_META = {
-    "conflict": {
-        "name": "冲突爽点", "cooldown": 2, "consecutive_limit": 2,
-        "quota": "A", "desc": "打脸/对决/爽点爆发",
-    },
-    "bond": {
-        "name": "人物羁绊", "cooldown": 3, "consecutive_limit": 3,
-        "quota": "B", "desc": "师徒/友情/情感深化",
-    },
-    "faction": {
-        "name": "势力经营", "cooldown": 4, "consecutive_limit": 2,
-        "quota": None, "desc": "宗门/势力/组织运作",
-    },
-    "world": {
-        "name": "风土人情", "cooldown": 3, "consecutive_limit": 2,
-        "quota": None, "desc": "世界观/风物/民俗",
-    },
-    "crisis": {
-        "name": "危机升级", "cooldown": 2, "consecutive_limit": 2,
-        "quota": None, "desc": "威胁逼近/压力升级",
-    },
-    "revelation": {
-        "name": "核心秘密", "cooldown": 5, "consecutive_limit": 1,
-        "quota": "C", "desc": "身世/真相/核心揭秘（C类升级）",
-    },
-}
+try:
+    from config import EVENT_META
+except ImportError:
+    EVENT_META = {
+        "conflict": {
+            "name": "冲突爽点", "cooldown": 2, "consecutive_limit": 2,
+            "quota": "A", "desc": "打脸/对决/爽点爆发",
+        },
+        "bond": {
+            "name": "人物羁绊", "cooldown": 3, "consecutive_limit": 3,
+            "quota": "B", "desc": "师徒/友情/情感深化",
+        },
+        "faction": {
+            "name": "势力经营", "cooldown": 4, "consecutive_limit": 2,
+            "quota": None, "desc": "宗门/势力/组织运作",
+        },
+        "world": {
+            "name": "风土人情", "cooldown": 3, "consecutive_limit": 2,
+            "quota": None, "desc": "世界观/风物/民俗",
+        },
+        "crisis": {
+            "name": "危机升级", "cooldown": 2, "consecutive_limit": 2,
+            "quota": None, "desc": "威胁逼近/压力升级",
+        },
+        "revelation": {
+            "name": "核心秘密", "cooldown": 5, "consecutive_limit": 1,
+            "quota": "C", "desc": "身世/真相/核心揭秘（C类升级）",
+        },
+    }
 
 # gentle_window：每5章至少1次 bond 或 world
 GENTLE_WINDOW_SIZE = 5

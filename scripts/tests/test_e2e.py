@@ -84,7 +84,7 @@ class TestE2EBookshelfInit(unittest.TestCase):
             [sys.executable, str(script), "测试小说",
              "--dir", str(self.tmpdir),
              "--genre", "都市", "--platform", "番茄"],
-            capture_output=True, text=True, timeout=30,
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30,
         )
 
         self.assertEqual(result.returncode, 0,
@@ -126,7 +126,7 @@ class TestE2EBookshelfInit(unittest.TestCase):
             [sys.executable, str(script), "测试",
              "--dir", str(self.tmpdir),
              "--genre", "玄幻", "--platform", "起点"],
-            capture_output=True, text=True, timeout=30,
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30,
         )
         self.assertEqual(r1.returncode, 0)
 
@@ -141,7 +141,7 @@ class TestE2EBookshelfInit(unittest.TestCase):
             [sys.executable, str(script), "测试",
              "--dir", str(self.tmpdir),
              "--genre", "玄幻", "--platform", "起点"],
-            capture_output=True, text=True, timeout=30,
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30,
         )
         # 非零退出码表示拒绝覆盖
         self.assertNotEqual(r2.returncode, 0,
@@ -561,7 +561,7 @@ class TestE2EFullIntegration(unittest.TestCase):
             [sys.executable, str(init_script), "全流程测试",
              "--dir", str(self.tmpdir),
              "--genre", "玄幻", "--platform", "起点"],
-            capture_output=True, text=True, timeout=30,
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30,
         )
         self.assertEqual(r_init.returncode, 0, "初始化应成功")
 

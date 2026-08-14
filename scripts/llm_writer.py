@@ -174,6 +174,12 @@ def cmd_config(book_root, args):
 
 
 def main():
+    # Windows 中文控制台默认 GBK 输出，在 Git Bash 等 UTF-8 终端下会乱码；统一按 UTF-8 输出
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")
+        except (AttributeError, OSError):
+            pass
     ap = argparse.ArgumentParser(description="多 LLM 写作引擎 v1.0.0")
     ap.add_argument("command", choices=["write", "config"])
     ap.add_argument("book_root", help="书籍工程目录")

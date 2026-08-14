@@ -27,6 +27,13 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Optional
 
+# 统一 stdout/stderr 编码（Windows GBK 控制台兼容，logger 作为控制台输出库在模块级初始化）
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+    except (AttributeError, OSError):
+        pass
+
 # =============================================================================
 # 日志级别
 # =============================================================================

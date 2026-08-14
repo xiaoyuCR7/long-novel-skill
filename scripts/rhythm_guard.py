@@ -37,8 +37,8 @@ v2.0 新增 5 类事件矩阵 + gentle_window + recommend/record 子命令：
 检查项：
   1. A/B/C 配额越界：本章声明同时触发 ≥2 项 → FAIL
   2. A/B/C 冷却违规：A 冷却 2 章 / B 冷却 1 章 / C 冷却 3 章
-  3. 事件冷却违规：conflict_thrill 2 / bond_deepening 1 / faction_building 2 /
-     world_painting 3 / tension_escalation 2 / revelation 3
+  3. 事件冷却违规：conflict 2 / bond 3 / faction 4 / world 3 / crisis 2 / revelation 5
+     （旧名 conflict_thrill/bond_deepening 等经别名归一化后走同一套冷却值）
   4. 连续快档：当前快档且上一章快档 → FAIL
   5. 慢档缺失：近 4 章无慢档 → WARN
   6. bond_deepening 缺失：连续 3 章无 bond_deepening → WARN
@@ -71,28 +71,25 @@ import os
 import re
 import sys
 
-# A/B/C 配额冷却（触发后接下来 N 章不得再触发同类）
+# A/B/C 配额冷却（触发后接下来 N 章不得再触发同类；与事件 cooldown 是独立概念，不可混用）
 QUOTA_COOLDOWN = {"A": 2, "B": 1, "C": 3}
 
 # v2.0 事件矩阵：5+1 类事件类型与冷却期
 # 向后兼容映射：conflict→A，bond→B（部分），revelation→C（部分）
 EVENT_TYPES_NEW = ["conflict", "bond", "faction", "world", "crisis", "revelation"]
-EVENT_COOLDOWN_NEW = {
-    "conflict": 2,     # 冷却2章，连续上限2
-    "bond": 3,         # 冷却3章
-    "faction": 4,      # 冷却4章
-    "world": 3,        # 冷却3章
-    "crisis": 2,       # 冷却2章
-    "revelation": 5,   # 冷却5章（C类升级）
-}
-EVENT_CONSECUTIVE_LIMIT = {
-    "conflict": 2,     # 连续上限2
-    "bond": 3,
-    "faction": 2,
-    "world": 2,
-    "crisis": 2,
-    "revelation": 1,
-}
+
+# 事件冷却/连续上限单一来源：config.EVENT_META（失败回退到内联常量，值保持一致）
+try:
+    from config import EVENT_META
+    EVENT_COOLDOWN_NEW = {k: v["cooldown"] for k, v in EVENT_META.items()}
+    EVENT_CONSECUTIVE_LIMIT = {k: v["consecutive_limit"] for k, v in EVENT_META.items()}
+except ImportError:
+    EVENT_COOLDOWN_NEW = {
+        "conflict": 2, "bond": 3, "faction": 4, "world": 3, "crisis": 2, "revelation": 5,
+    }
+    EVENT_CONSECUTIVE_LIMIT = {
+        "conflict": 2, "bond": 3, "faction": 2, "world": 2, "crisis": 2, "revelation": 1,
+    }
 # A/B/C → 新事件类型映射（双向兼容）
 QUOTA_TO_EVENT = {"A": "conflict", "B": "bond", "C": "revelation"}
 EVENT_TO_QUOTA = {"conflict": "A", "bond": "B", "revelation": "C"}
@@ -111,17 +108,12 @@ EVENT_ALIASES = {
 GENTLE_WINDOW_SIZE = 5
 GENTLE_WINDOW_TYPES = ("bond", "world")
 
-# 旧版事件类型与冷却期（向后兼容）
+# 旧版事件类型名（仅用于声明解析向后兼容；冷却值统一走 EVENT_COOLDOWN_NEW）
 EVENT_TYPES = ["conflict_thrill", "bond_deepening", "faction_building",
                "world_painting", "tension_escalation", "revelation"]
-EVENT_COOLDOWN = {
-    "conflict_thrill": 2,
-    "bond_deepening": 1,
-    "faction_building": 2,
-    "world_painting": 3,
-    "tension_escalation": 2,
-    "revelation": 3,
-}
+
+# 向后兼容别名：旧事件名 → 冷却值（归一化后查 EVENT_COOLDOWN_NEW，单源真相）
+EVENT_COOLDOWN = {old: EVENT_COOLDOWN_NEW[new] for old, new in EVENT_ALIASES.items()}
 
 # 声明提取用关键词
 DECL_KEYWORDS = ("节奏声明", "quota", "配额", "触发", "声明", "档位", "事件",
@@ -277,17 +269,7 @@ def run_checks(records, current, quota_set, event, gear):
                 fails.append(f"{q} 冷却违规：第{prev}章触发 {q}，冷却期 {cd} 章，"
                              f"当前第{current}章（间隔 {gap} 章 ≤ {cd}）")
 
-    # 3. 事件冷却违规（旧版兼容）
-    if event:
-        prev = max((c for c, ev, _ in records["events"]
-                    if c < current and ev == event), default=None)
-        if prev is not None:
-            gap = current - prev
-            cd = EVENT_COOLDOWN.get(event, 2)
-            if gap <= cd:
-                fails.append(f"事件冷却违规：{event} 第{prev}章触发，冷却期 {cd} 章，"
-                             f"当前第{current}章（间隔 {gap} 章 ≤ {cd}）")
-
+    # 3. 事件冷却违规（统一走 v2.0 新版检查，旧名经别名归一化后同一套冷却值）
     # v2.0 新增：新版事件矩阵冷却检查
     events_new = parse_event_records(records)
     if event:

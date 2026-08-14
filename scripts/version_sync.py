@@ -61,6 +61,12 @@ def read_readme_version():
 
 
 def main():
+    # Windows 中文控制台默认 GBK 输出，在 Git Bash 等 UTF-8 终端下会乱码；统一按 UTF-8 输出
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")
+        except (AttributeError, OSError):
+            pass
     ap = argparse.ArgumentParser(description="版本号一致性检查")
     ap.add_argument("--check", action="store_true", help="CI 模式：不一致时 exit 1")
     args = ap.parse_args()

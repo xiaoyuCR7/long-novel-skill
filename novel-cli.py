@@ -69,7 +69,7 @@ def cmd_write(args):
 
     book_dir = args[0]
     rest = args[1:]
-    return run_script("novel_flow", ["prepare", book_dir] + rest)
+    return run_script("novel_flow", ["write", book_dir] + rest)
 
 
 def cmd_score(args):
@@ -126,26 +126,20 @@ def cmd_graph(args):
     return run_script("story_graph", args)
 
 
-def cmd_retrieval(args):
-    """统一检索系统（推荐使用，替代 rag/entity 命令）"""
-    if len(args) < 2:
-        print("用法: novel-cli retrieval <build|query|entities|grep|status|context> <书名目录> [--top N]")
-        return 1
-    return run_script("retrieval", args)
-
-
 def cmd_rag(args):
-    """RAG检索（已合并至 retrieval，保留向后兼容）"""
-    print("[提示] rag 命令已合并至 retrieval。推荐使用: novel-cli retrieval", file=sys.stderr)
+    """RAG检索"""
+    if len(args) < 1:
+        print("用法: novel-cli rag <build|query|status> <书名目录> [--query <文本>]")
+        return 1
     return run_script("rag_retriever", args)
 
 
 def cmd_event(args):
-    """统一事件调度系统（推荐使用，替代 rhythm 命令）"""
+    """事件矩阵调度（5+1类事件：推荐/记录/冷却状态）"""
     if len(args) < 2:
-        print("用法: novel-cli event <check|recommend|record|status|quota> <书名目录> [--chapter N] [--gear 快/中/慢]")
+        print("用法: novel-cli event <recommend|record|status> <书名目录> [--chapter N]")
         return 1
-    return run_script("event_system", args)
+    return run_script("event_matrix", args)
 
 
 def cmd_gate_repair(args):
@@ -262,7 +256,7 @@ def cmd_package(args):
 def show_help():
     """显示帮助"""
     print("""
-novel-cli — long-novel-skill 统一命令行入口 v6.1
+novel-cli — long-novel-skill 统一命令行入口 v7.0.0
 
 用法:
     python novel-cli.py <命令> [参数]
@@ -333,15 +327,8 @@ novel-cli — long-novel-skill 统一命令行入口 v6.1
                     novel-cli package list-platforms
                     novel-cli package generate-all --output dist/
 
-    retrieval     统一检索系统（v6.3 新增，推荐）
-                    novel-cli retrieval build <书名目录>
-                    novel-cli retrieval query <书名目录> "查询文本" --top 4
-                    novel-cli retrieval entities <书名目录> 实体名
-                    novel-cli retrieval status <书名目录>
-
-    event         统一事件调度系统（v6.3 新增，推荐）
-                    novel-cli event check <书名目录> --chapter N --declare "A,conflict,快"
-                    novel-cli event recommend <书名目录> --gear 快
+    event         事件矩阵调度（5+1类事件）
+                    novel-cli event recommend <书名目录> --chapter N
                     novel-cli event record <书名目录> --event conflict --chapter N
                     novel-cli event status <书名目录>
 
@@ -410,8 +397,7 @@ COMMANDS = {
     "style": cmd_style,
     "outline": cmd_outline,
     "graph": cmd_graph,
-    "rag": cmd_rag,            # RAG检索（兼容）
-    "retrieval": cmd_retrieval, # 统一检索（推荐）
+    "rag": cmd_rag,            # RAG检索
     "beat": cmd_beat,
     "gate-repair": cmd_gate_repair,
     "normalize": cmd_normalize,

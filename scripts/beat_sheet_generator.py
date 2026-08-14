@@ -1627,6 +1627,12 @@ def _check_emotion_curve_validation(
 # =========================================================
 
 def main():
+    # Windows 中文控制台默认 GBK 输出，在 Git Bash 等 UTF-8 终端下会乱码；统一按 UTF-8 输出
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")
+        except (AttributeError, OSError):
+            pass
     parser = argparse.ArgumentParser(
         description="Beat Sheet（分镜表）生成器 — 将章节拆解为独立叙事单元",
         formatter_class=argparse.RawDescriptionHelpFormatter,

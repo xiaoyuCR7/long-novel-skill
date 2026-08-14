@@ -1,9 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""rag_retriever.py — RAG剧情检索器 v1.0.1（v1.0.1: BM25Index 委托 common.py）。
-
-新代码推荐使用 retrieval.py（统一检索入口）。
-"""
+"""rag_retriever.py — RAG剧情检索器 v1.0.1（v1.0.1: BM25Index 委托 common.py）。"""
 
 import argparse
 import glob

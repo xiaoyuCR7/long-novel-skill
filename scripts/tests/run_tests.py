@@ -36,6 +36,17 @@ TEST_MODULES = [
     "test_rhythm_guard",
     "test_entity_index",
     "test_outline_anchor",
+    # 以下模块历史上未接入默认运行器（v7.0 补齐，覆盖 744 测试函数）
+    "test_ai_patterns",
+    "test_anti_resolution",
+    "test_content_expander",
+    "test_e2e",
+    "test_entry_mode",
+    "test_quality_score",
+    "test_rag_retriever",
+    "test_ranking_crawler",
+    "test_story_graph",
+    "test_style_fingerprint",
 ]
 
 # 测试目录与 scripts 目录

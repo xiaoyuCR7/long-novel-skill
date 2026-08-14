@@ -99,11 +99,10 @@ install_skill() {
     fi
 
     # 复制skill文件
-    # 排除不需要的文件
+    # 排除不需要的文件（mcp_server 一并复制，MCP 需另行 pip install mcp）
     rsync -av --exclude='__pycache__' \
               --exclude='*.pyc' \
               --exclude='.git' \
-              --exclude='mcp_server' \
               "$SCRIPT_DIR/" "$target/" 2>/dev/null || \
     cp -R "$SCRIPT_DIR" "$target"
 
@@ -206,6 +205,7 @@ main() {
     echo ""
     log_info "安装完成！"
     log_info "提示: 安装后可能需要重启AI客户端或新开会话才能生效"
+    log_info "机械 Hook（可选）: 在书籍工程目录内运行 python scripts/deploy_hooks.py <书名目录> 以启用无纲写正文/毒句式欠账的机械阻断"
 }
 
 main "$@"

@@ -47,7 +47,7 @@ description: >-
   共享模块（common.py工具函数+config.py配置常量+环境变量覆盖）、
   CI/CD自动化流水线（GitHub Actions：构建测试/跨平台/发布管理）、
   真实Demo项目（武道重生5章完整样例+全套追踪文件）、
-  核心脚本测试套件（189 核心单元测试 CI 全量验证，全量 744 测试覆盖 20 个脚本模块）。
+  核心脚本测试套件（744 单元测试覆盖 20 个脚本模块，默认全量运行）。
   题材规则可插拔（34 题材按需加载，含九件事正文层规范），平台适配番茄/起点/晋江/飞卢/知乎盐言/番茄短篇。
   当用户想写小说、长篇/短篇网文，或提到开书、写大纲、写第X章、续写、日更、卡文、
   人设崩了、伏笔、爽点、拆文、扫榜、仿写、投稿平台选择、去AI味、脑洞、扩充、质量评分、
@@ -57,21 +57,21 @@ activation: /long-novel-skill
 compatibility: Requires Python 3.8+ and file system access. Supports Claude Code, TRAE, Cursor, OpenCode, Codex, and any MCP client.
 metadata:
   author: 熊小雨
-  version: 6.8.0
+  version: 7.0.0
   created: 2026-07-26
-  last_reviewed: 2026-08-10
+  last_reviewed: 2026-08-14
   review_interval_days: 90
   mcp_server: mcp_server/server.py
 provenance:
   maintainer: 熊小雨
-  version: 6.8.0
+  version: 7.0.0
   created: 2026-07-26
   source_references:
     - skills/novel-creator-skill（借鉴五层一致性/Beat Sheet/节奏配额/语义级节奏审查/知识图谱/联网调研/风格库设计，未引用内容）
     - skills/oh-story-claudecode（借鉴7 Gate/拆文/扫榜/短篇/对话精通/悬念分级/信息团/爆款语料设计，未引用内容）
 ---
 
-# /long-novel-skill — 通用网文创作（长篇+短篇）v6.8
+# /long-novel-skill — 通用网文创作（长篇+短篇）v7.0
 
 你是网文创作助手，陪作者完成从选题到成稿的全流程。核心 skill 只装通用写作工艺；
 题材与平台规则全部放在 references 里按需加载——**不要把所有题材包一次性读进来**。
@@ -349,9 +349,10 @@ python scripts/outline_anchor.py check "{书名目录}" --chapter {N} --quota A
 
 ## v6.3 更新日志（2026-07-30）— 架构优化版
 
-### 核心合并（消除冗余）
-- **统一检索系统 `retrieval.py`**：合并 entity_index.py + rag_retriever.py，从 common.py 导入 BM25Index，消除 ~400 行重复代码；统一索引文件 `retrieval_index.json`；支持 build/query/entities/grep/status/context 六子命令
-- **统一事件系统 `event_system.py`**：合并 rhythm_guard.py + event_matrix.py，事件类型+冷却值单一定义；支持 check/recommend/record/status/quota 五子命令；A/B/C 配额 Markdown 文件向后兼容
+### 核心合并（v7.0 已回滚）
+> ⚠️ 本次「合并」未完成：`retrieval.py` / `event_system.py` 未接线进 novel_flow、未纳入测试、且非干净超集（rhythm_guard 的档位/A-B-C 配额/gate-state、entity_index 的 semantic 均未被覆盖）。v7.0 已删除这两个孤儿脚本，`entity_index.py` / `rag_retriever.py` / `rhythm_guard.py` / `event_matrix.py` 恢复为 canonical 单一实现；事件冷却值收敛到 `config.EVENT_META`。
+- ~~统一检索系统 `retrieval.py`~~（已移除）
+- ~~统一事件系统 `event_system.py`~~（已移除）
 - **版本号统一**：skill.json / SKILL.md / README.md / config.py 全部同步至 6.3.0
 - **AI 阈值修复**：check_text.py 从 config.py 导入 AI_SCORE_THRESHOLDS，消除硬编码阈值与配置不同步 bug
 
@@ -386,7 +387,7 @@ python scripts/outline_anchor.py check "{书名目录}" --chapter {N} --quota A
 
 ### 测试覆盖扩展
 - 新增 `test_entry_mode.py`（44 例）、`test_story_graph.py`（22 例）、`test_style_fingerprint.py`（61 例）、`test_quality_score.py`（70 例）、`test_rag_retriever.py`（75 例）、`test_ranking_crawler.py`（93 例）、`test_content_expander.py`（80 例）、`test_anti_resolution.py`（65 例）。
-- 测试总数：CI 默认执行 **189 例**（覆盖 10 个核心脚本），全量 **744 例**（覆盖 20 个脚本模块，含扩展测试待接入默认运行器）。
+- 测试总数：**744 例**（覆盖 20 个脚本模块，默认全量运行）。
 
 ### 选题与对标工具
 - **ranking_crawler.py 多平台榜单爬虫**：全新脚本，支持番茄/起点/晋江 3 大平台共 9 个榜单，24 小时缓存、重试机制、关键词分析、多平台对比、4 个 CLI 子命令。

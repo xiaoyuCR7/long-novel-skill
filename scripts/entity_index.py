@@ -2,10 +2,7 @@
 # -*- coding: utf-8 -*-
 """entity_index.py — 关键实体→章节索引 + BM25 两级语义检索 v2.1（纯标准库）。
 
-v2.1: BM25Index 委托 common.py（消除重复代码），新增 retrieval.py 作为统一入口。
-所有新代码请直接使用 retrieval.py。本文件保留向后兼容。
-
-用法同 v2.0，详见 retrieval.py。
+v2.1: BM25Index 委托 common.py（消除重复代码）。
 """
 
 import argparse

@@ -1021,6 +1021,12 @@ def impact_analysis(
 # =========================================================
 
 def main():
+    # Windows 中文控制台默认 GBK 输出，在 Git Bash 等 UTF-8 终端下会乱码；统一按 UTF-8 输出
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")
+        except (AttributeError, OSError):
+            pass
     parser = argparse.ArgumentParser(
         description="轻量知识图谱：节点+边+版本，支撑百万字级联影响分析",
         formatter_class=argparse.RawDescriptionHelpFormatter,

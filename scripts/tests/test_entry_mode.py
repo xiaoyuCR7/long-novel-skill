@@ -451,7 +451,7 @@ class TestCLISubcommands(unittest.TestCase):
         script = _SCRIPTS_DIR / "entry_mode.py"
         result = subprocess.run(
             [sys.executable, str(script), "list"],
-            capture_output=True, text=True, timeout=15,
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=15,
         )
         self.assertEqual(result.returncode, 0)
         self.assertIn("8种章节入口模式", result.stdout)
@@ -465,7 +465,7 @@ class TestCLISubcommands(unittest.TestCase):
         result = subprocess.run(
             [sys.executable, str(script), "recommend",
              str(self.book_dir), "--gear", "快"],
-            capture_output=True, text=True, timeout=15,
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=15,
         )
         self.assertEqual(result.returncode, 0)
         self.assertIn("推荐入口模式", result.stdout)
@@ -478,7 +478,7 @@ class TestCLISubcommands(unittest.TestCase):
         result = subprocess.run(
             [sys.executable, str(script), "persona",
              str(self.book_dir), "--gear", "中"],
-            capture_output=True, text=True, timeout=15,
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=15,
         )
         self.assertEqual(result.returncode, 0)
         self.assertIn("人格推荐", result.stdout)
@@ -490,7 +490,7 @@ class TestCLISubcommands(unittest.TestCase):
         result = subprocess.run(
             [sys.executable, str(script), "persona",
              str(self.book_dir), "--gear", "快", "--mode", "action"],
-            capture_output=True, text=True, timeout=15,
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=15,
         )
         self.assertEqual(result.returncode, 0)
         self.assertIn("兼容性", result.stdout)
@@ -503,7 +503,7 @@ class TestCLISubcommands(unittest.TestCase):
             [sys.executable, str(script), "record",
              str(self.book_dir), "--chapter", "3",
              "--mode", "action", "--persona", "blade", "--gear", "快"],
-            capture_output=True, text=True, timeout=15,
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=15,
         )
         self.assertEqual(result.returncode, 0)
         self.assertIn("已记录", result.stdout)
@@ -519,7 +519,7 @@ class TestCLISubcommands(unittest.TestCase):
         result = subprocess.run(
             [sys.executable, str(script), "check",
              str(self.book_dir)],
-            capture_output=True, text=True, timeout=15,
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=15,
         )
         self.assertEqual(result.returncode, 0)
         self.assertIn("轮换检查", result.stdout)
@@ -532,7 +532,7 @@ class TestCLISubcommands(unittest.TestCase):
             [sys.executable, str(script), "record",
              str(self.book_dir), "--chapter", "3",
              "--mode", "不存在的模式"],
-            capture_output=True, text=True, timeout=15,
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=15,
         )
         self.assertNotEqual(result.returncode, 0)
 
@@ -543,7 +543,7 @@ class TestCLISubcommands(unittest.TestCase):
         result = subprocess.run(
             [sys.executable, str(script), "recommend",
              str(self.tmpdir / "不存在"), "--gear", "快"],
-            capture_output=True, text=True, timeout=15,
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=15,
         )
         self.assertNotEqual(result.returncode, 0)
 

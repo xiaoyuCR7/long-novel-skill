@@ -1,5 +1,20 @@
 # CHANGELOG
 
+## v7.0.0 (2026-08-14)
+
+### 工程修复（三方对比审计落地）
+
+- **Windows GBK 编码**：13 个脚本补 `sys.stdout.reconfigure(utf-8)`（原 6 脚本在中文 Windows 控制台 emoji 崩溃）；`novel_flow.run_script` 子进程捕获加 `encoding="utf-8"`。
+- **MCP Server 修复**：24 个 tool 原以 `main(args)` 调零参 `main()` 全抛 TypeError，改为统一 `_run_script` 子进程分发；安装纳入 mcp_server + `requirements.txt`。
+- **配置单一来源**：字数阈值/超时/事件冷却收敛到 `config.py`（新增 `EVENT_META`）；`editorial_manager`/`novel_flow` 硬编码阈值改为 import config。
+- **事件冷却正确性**：删除 `rhythm_guard` 里数值矛盾的 legacy 表 + 重复检查，统一走 `config.EVENT_META`（bond=3/revelation=5，与 event_matrix 一致）。
+- **中文分词修复**：`tokenize_chinese` bigram 改为在过滤后 chars 上滑窗，消除空白/标点混入。
+- **机械 Hook 部署**：新增 `hook_entry.py`（Claude Code 事件分发器，fail-open + `<!-- lns:skip -->` 豁免）+ `deploy_hooks.py`（settings.json 幂等注册/卸载）。
+- **回滚 v6.3 未完成合并**：删除 `retrieval.py`/`event_system.py`（未接线、未测试、非干净超集），`entity_index`/`rag_retriever`/`rhythm_guard`/`event_matrix` 恢复 canonical；novel-cli 命令表同步。
+- **测试全接通**：`run_tests.py` 从 10 模块扩到 20 模块，744 测试全量运行（原默认仅 189）。
+
+---
+
 ## v6.8.0 (2026-08-10)
 
 ### 章节衔接工艺（新增功能，章间无缝连接）

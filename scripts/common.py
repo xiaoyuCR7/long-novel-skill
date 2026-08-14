@@ -97,6 +97,18 @@ LIGHT_SCENE_KEYWORDS = [
 ]
 
 
+def ensure_utf8_stdout():
+    """统一 stdout/stderr 为 UTF-8 输出（Windows GBK 控制台兼容）。
+
+    供各脚本 main() 或库模块复用；幂等，可安全多次调用。
+    """
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")
+        except (AttributeError, OSError):
+            pass
+
+
 def tokenize_chinese(text):
     """简易中文分词：去停用字单字 + 滑窗双字词。
 
@@ -106,11 +118,8 @@ def tokenize_chinese(text):
     chars = [c for c in text if c.strip() and c not in _STOP_CHARS]
     # 单字
     unigrams = chars
-    # 双字词（滑窗）
-    bigrams = [
-        text[i:i + 2] for i in range(len(text) - 1)
-        if text[i] not in _STOP_CHARS and text[i + 1] not in _STOP_CHARS
-    ]
+    # 双字词（滑窗）：在过滤后的 chars 上滑窗，与 unigram 同基准，避免空白/标点/停用字混入
+    bigrams = [chars[i] + chars[i + 1] for i in range(len(chars) - 1)]
     return unigrams + bigrams
 
 

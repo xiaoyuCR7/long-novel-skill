@@ -777,6 +777,12 @@ def generate_brief_context(context: Dict[str, Any]) -> str:
 # =========================================================
 
 def main():
+    # Windows 中文控制台默认 GBK 输出，在 Git Bash 等 UTF-8 终端下会乱码；统一按 UTF-8 输出
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")
+        except (AttributeError, OSError):
+            pass
     parser = argparse.ArgumentParser(
         description="长篇上下文管理器 — 智能选取最小必读上下文",
         formatter_class=argparse.RawDescriptionHelpFormatter,

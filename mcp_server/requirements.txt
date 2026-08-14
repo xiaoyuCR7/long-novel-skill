@@ -1,0 +1,4 @@
+# long-novel-skill MCP Server 依赖（核心 skill 仍为零依赖）
+# 安装：pip install -r mcp_server/requirements.txt
+mcp>=1.0.0
+pydantic>=2.0.0

@@ -196,8 +196,8 @@ class TestCheckTrackingSync(unittest.TestCase):
 
     def test_sync_with_summary_and_state(self):
         """追踪文件包含目标章节时应返回 True。"""
-        (self.root / "追踪" / "章节摘要.md").write_text("### 第5章\n摘要内容")
-        (self.root / "追踪" / "角色状态.md").write_text("第5章 状态")
+        (self.root / "追踪" / "章节摘要.md").write_text("### 第5章\n摘要内容", encoding="utf-8")
+        (self.root / "追踪" / "角色状态.md").write_text("第5章 状态", encoding="utf-8")
         result = check_tracking_sync(self.root, 5)
         self.assertTrue(result["章节摘要"])
         self.assertTrue(result["角色状态"])
