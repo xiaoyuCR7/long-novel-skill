@@ -70,51 +70,67 @@ BUDGET_RATIOS = {
     "entity_context": 0.05,     # 实体上下文
 }
 
-# 内置动态阶段配置（与 config.py CONTEXT_STAGES 保持一致）
+# 内置动态阶段配置（与 config.py CONTEXT_STAGES 保持一致；v7.0 补全组件）
 _FALLBACK_CONTEXT_STAGES = {
     "opening": {
         "range": (0.0, 0.05),
         "ratios": {
-            "chapter_brief": 0.20,
-            "character_cards": 0.30,
-            "recent_summaries": 0.15,
-            "foreshadowing": 0.10,
-            "style_anchor": 0.15,
-            "rhythm_quota": 0.10,
+            "chapter_brief": 0.18,
+            "character_cards": 0.25,
+            "recent_summaries": 0.10,
+            "foreshadowing": 0.08,
+            "rhythm_quota": 0.08,
+            "outline_anchor": 0.05,
+            "entity_context": 0.03,
+            "character_state": 0.10,
+            "world_setting": 0.08,
+            "style_anchor": 0.05,
         },
     },
     "development": {
         "range": (0.05, 0.30),
         "ratios": {
-            "chapter_brief": 0.15,
-            "character_cards": 0.20,
-            "recent_summaries": 0.25,
-            "foreshadowing": 0.15,
-            "style_anchor": 0.10,
-            "rhythm_quota": 0.15,
+            "chapter_brief": 0.12,
+            "character_cards": 0.16,
+            "recent_summaries": 0.20,
+            "foreshadowing": 0.13,
+            "rhythm_quota": 0.10,
+            "outline_anchor": 0.06,
+            "entity_context": 0.05,
+            "character_state": 0.08,
+            "world_setting": 0.05,
+            "style_anchor": 0.05,
         },
     },
     "deepwater": {
         "range": (0.30, 0.75),
         "ratios": {
-            "chapter_brief": 0.12,
-            "character_cards": 0.15,
-            "recent_summaries": 0.35,
-            "foreshadowing": 0.20,
-            "style_anchor": 0.08,
-            "rhythm_quota": 0.10,
+            "chapter_brief": 0.10,
+            "character_cards": 0.12,
+            "recent_summaries": 0.25,
+            "foreshadowing": 0.18,
+            "rhythm_quota": 0.08,
+            "outline_anchor": 0.06,
+            "entity_context": 0.06,
+            "character_state": 0.07,
+            "world_setting": 0.05,
+            "style_anchor": 0.03,
         },
     },
     "finale": {
         "range": (0.75, 1.0),
         "ratios": {
-            "chapter_brief": 0.10,
-            "character_cards": 0.10,
-            "recent_summaries": 0.20,
-            "foreshadowing": 0.35,
-            "style_anchor": 0.05,
-            "rhythm_quota": 0.10,
-            "milestone": 0.10,       # 里程碑（终局储备）
+            "chapter_brief": 0.08,
+            "character_cards": 0.08,
+            "recent_summaries": 0.16,
+            "foreshadowing": 0.30,
+            "rhythm_quota": 0.08,
+            "outline_anchor": 0.06,
+            "entity_context": 0.04,
+            "character_state": 0.06,
+            "world_setting": 0.04,
+            "style_anchor": 0.03,
+            "milestone": 0.07,       # 里程碑（终局储备）
         },
     },
 }
@@ -613,6 +629,32 @@ def select_context(book_dir: Path, target_chapter: int, max_chars: int = DEFAULT
             }
         except (json.JSONDecodeError, TypeError):
             pass
+
+    # 8.5 角色状态（活跃角色当前状态，v7.0 新增）
+    char_state_file = book_dir / "追踪" / "角色状态.md"
+    if char_state_file.exists() and "character_state" in budget:
+        char_state_content = read_file_safe(char_state_file)
+        # 保留角色标题 + 含章号的变更行（成长轨迹/状态变更），压缩到预算
+        state_lines = [ln for ln in char_state_content.split("\n")
+                       if re.search(r"第\d+章|^#|成长轨迹|状态变更", ln)]
+        char_state_text = "\n".join(state_lines[-40:])
+        char_state_text = truncate_text(char_state_text, budget["character_state"])
+        context["components"]["character_state"] = {
+            "source": "角色状态.md",
+            "chars": count_chars(char_state_text),
+            "content": char_state_text,
+        }
+
+    # 8.6 世界观关键设定（v7.0 新增）
+    world_file = book_dir / "设定" / "世界观.md"
+    if world_file.exists() and "world_setting" in budget:
+        world_content = read_file_safe(world_file)
+        world_content = truncate_text(world_content, budget["world_setting"])
+        context["components"]["world_setting"] = {
+            "source": "世界观.md",
+            "chars": count_chars(world_content),
+            "content": world_content,
+        }
 
     # 9. 里程碑（v1.1 新增：finale 阶段加载终局储备）
     if stage == "finale" and "milestone" in budget:

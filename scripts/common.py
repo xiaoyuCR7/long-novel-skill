@@ -109,22 +109,121 @@ def ensure_utf8_stdout():
             pass
 
 
-def tokenize_chinese(text):
-    """简易中文分词：去停用字单字 + 滑窗双字词。
+def tokenize_chinese(text, extra_terms=None):
+    """简易中文分词：去停用字单字 + 滑窗双字词 + 可选专名词典整词。
 
     返回 list[str]：分词结果。
     纯标准库实现，不依赖 jieba。
+
+    extra_terms: 可选专名列表（角色名/实体名等）。出现在 text 中时作为整体 token
+    追加，使多字专名可整体命中；保留 unigram+bigram 作为泛化兜底。
     """
     chars = [c for c in text if c.strip() and c not in _STOP_CHARS]
     # 单字
     unigrams = chars
     # 双字词（滑窗）：在过滤后的 chars 上滑窗，与 unigram 同基准，避免空白/标点/停用字混入
     bigrams = [chars[i] + chars[i + 1] for i in range(len(chars) - 1)]
-    return unigrams + bigrams
+    tokens = unigrams + bigrams
+    if extra_terms:
+        for term in extra_terms:
+            t = (term or "").strip()
+            if len(t) >= 2 and t in text:
+                tokens.append(t)
+    return tokens
 
 
 # 向后兼容别名
 _tokenize_chinese = tokenize_chinese
+
+
+def load_char_names(book_dir):
+    """收集角色名（设定/角色/*.md 文件名），用于章节摘要实体提取回退。"""
+    names = []
+    char_dir = Path(book_dir) / "设定" / "角色"
+    if char_dir.is_dir():
+        for p in char_dir.glob("*.md"):
+            n = p.stem.strip()
+            if n and n.lower() != "readme":
+                names.append(n)
+    return names
+
+
+def recency_boost(chapter_num, current_chapter, decay=0.02):
+    """章节 recency 衰减：越接近当前章，权重越高。返回 (0,1] 的乘子。"""
+    if current_chapter is None or chapter_num is None:
+        return 1.0
+    distance = current_chapter - chapter_num
+    if distance <= 0:
+        return 1.0
+    return _math.exp(-decay * distance)
+
+
+def prune_cache(cache, max_entries=500, ttl_seconds=7 * 24 * 3600, now=None):
+    """按 TTL（默认 7 天）+ LRU 上限（默认 500 条）裁剪检索缓存。
+
+    cache 条目需含 'time' 字段（格式 '%Y-%m-%d %H:%M:%S'）。返回裁剪后的 dict。
+    """
+    if not isinstance(cache, dict):
+        return {}
+    if now is None:
+        now = time.time()
+    fmt = "%Y-%m-%d %H:%M:%S"
+    kept = {}
+    for k, v in cache.items():
+        if not isinstance(v, dict):
+            continue
+        t = v.get("time", "")
+        try:
+            ts = time.mktime(time.strptime(t, fmt))
+        except (ValueError, OverflowError, OSError):
+            ts = now
+        if now - ts <= ttl_seconds:
+            kept[k] = v
+    items = sorted(kept.items(), key=lambda kv: kv[1].get("time", ""), reverse=True)
+    return dict(items[:max_entries])
+
+
+def extract_summary_fields(body, char_names=None):
+    """兼容新旧章节摘要格式，提取 {summary, entities, emotion_tags}。
+
+    新格式：``章节摘要：/关键实体：/情绪基调：`` 字段（当前模板）。
+    旧格式：``### 核心事件 / ### 人物变化 / 节奏档位`` 段落（demo 用）。
+    回退策略：字段未命中时依次降级到旧格式，再降级到空。
+    """
+    result = {"summary": "", "entities": [], "emotion_tags": []}
+
+    # 摘要：新格式字段 → 旧格式「核心事件」段落
+    m = re.search(r"(?:章节摘要|一句话|概要)[：:](.*?)(?:\n\s*-\s|\n#{1,3}|\Z)", body, re.S)
+    if m:
+        result["summary"] = m.group(1).strip().strip("。 ")
+    else:
+        m2 = re.search(r"#{1,3}\s*核心事件[：:]?\s*\n(.*?)(?=\n#{1,3}|\Z)", body, re.S)
+        if m2:
+            result["summary"] = m2.group(1).strip()[:200]
+
+    # 实体：新格式字段 → 旧格式「人物变化」里的角色名
+    m = re.search(r"关键实体[：:](.*?)(?:\n\s*-\s|\n#{1,3}|\Z)", body, re.S)
+    if m:
+        result["entities"] = [p.strip() for p in re.split(r"[，,、/；;\n]+", m.group(1))
+                              if p.strip() and len(p.strip()) <= 20]
+    elif char_names:
+        found = set()
+        for name in char_names:
+            if name and len(name) >= 2 and name in body:
+                found.add(name)
+        result["entities"] = sorted(found)
+
+    # 情绪：新格式字段 → 旧格式「节奏档位」行
+    m = re.search(r"情绪基调[：:](.*?)(?:\n|$)", body)
+    if m:
+        result["emotion_tags"] = [t.strip() for t in re.split(r"[，,、/；;]+", m.group(1))
+                                  if t.strip() and len(t.strip()) <= 10]
+    else:
+        m2 = re.search(r"节奏档位\**\s*[：:]\s*(.{1,20})", body)
+        if m2:
+            result["emotion_tags"] = [m2.group(1).strip()]
+
+    return result
 
 
 class BM25Index:
@@ -139,10 +238,11 @@ class BM25Index:
         results = idx.search(tokens, top_k=8)
     """
 
-    def __init__(self, documents, k1=BM25_K1, b=BM25_B):
-        """documents: [(doc_id, text), ...]"""
+    def __init__(self, documents, k1=BM25_K1, b=BM25_B, extra_terms=None):
+        """documents: [(doc_id, text), ...]；extra_terms: 可选专名词典整词追加。"""
         self.k1 = k1
         self.b = b
+        self.extra_terms = extra_terms
         self.doc_ids = [d[0] for d in documents]
         self.doc_tokens = {}   # doc_id -> [tokens]
         self.doc_len = {}      # doc_id -> int
@@ -153,7 +253,7 @@ class BM25Index:
     def _build(self, documents):
         total_len = 0
         for doc_id, text in documents:
-            tokens = tokenize_chinese(text)
+            tokens = tokenize_chinese(text, self.extra_terms)
             self.doc_tokens[doc_id] = tokens
             self.doc_len[doc_id] = len(tokens)
             total_len += len(tokens)

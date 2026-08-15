@@ -141,50 +141,67 @@ CONTEXT_BUDGET_RATIOS = {
 
 # v6.1 动态上下文阶段定义：根据全书进度切换预算比例
 # 四阶段：开篇(0-5%) / 发展(5-30%) / 深水(30-75%) / 收束(75-100%)
+# v7.0 补全组件：outline_anchor / entity_context / character_state / world_setting
 CONTEXT_STAGES = {
     "opening": {
         "range": (0.0, 0.05),
         "ratios": {
-            "chapter_brief": 0.20,      # 开篇章纲更重要
-            "character_cards": 0.30,    # 角色卡需要更多
-            "recent_summaries": 0.15,   # 没几章可回顾
-            "foreshadowing": 0.10,
-            "style_anchor": 0.15,       # 奠定文风
-            "rhythm_quota": 0.10,
+            "chapter_brief": 0.18,      # 开篇章纲更重要
+            "character_cards": 0.25,    # 角色卡需要更多
+            "recent_summaries": 0.10,   # 没几章可回顾
+            "foreshadowing": 0.08,
+            "rhythm_quota": 0.08,
+            "outline_anchor": 0.05,
+            "entity_context": 0.03,
+            "character_state": 0.10,    # 活跃角色当前状态
+            "world_setting": 0.08,      # 关键设定约束
+            "style_anchor": 0.05,       # 奠定文风
         },
     },
     "development": {
         "range": (0.05, 0.30),
         "ratios": {
-            "chapter_brief": 0.15,
-            "character_cards": 0.20,
-            "recent_summaries": 0.25,
-            "foreshadowing": 0.15,
-            "style_anchor": 0.10,
-            "rhythm_quota": 0.15,       # 节奏开始吃紧
+            "chapter_brief": 0.12,
+            "character_cards": 0.16,
+            "recent_summaries": 0.20,
+            "foreshadowing": 0.13,
+            "rhythm_quota": 0.10,
+            "outline_anchor": 0.06,
+            "entity_context": 0.05,
+            "character_state": 0.08,
+            "world_setting": 0.05,
+            "style_anchor": 0.05,
         },
     },
     "deepwater": {
         "range": (0.30, 0.75),
         "ratios": {
-            "chapter_brief": 0.12,      # 章纲权重降
-            "character_cards": 0.15,    # 角色都熟了
-            "recent_summaries": 0.35,   # 近章回顾最关键
-            "foreshadowing": 0.20,      # 伏笔堆积期
-            "style_anchor": 0.08,
-            "rhythm_quota": 0.10,
+            "chapter_brief": 0.10,      # 章纲权重降
+            "character_cards": 0.12,    # 角色都熟了
+            "recent_summaries": 0.25,   # 近章回顾最关键
+            "foreshadowing": 0.18,      # 伏笔堆积期
+            "rhythm_quota": 0.08,
+            "outline_anchor": 0.06,
+            "entity_context": 0.06,
+            "character_state": 0.07,
+            "world_setting": 0.05,
+            "style_anchor": 0.03,
         },
     },
     "finale": {
         "range": (0.75, 1.0),
         "ratios": {
-            "chapter_brief": 0.10,
-            "character_cards": 0.10,
-            "recent_summaries": 0.20,
-            "foreshadowing": 0.35,      # 回收期，伏笔信息量最大
-            "style_anchor": 0.05,
-            "rhythm_quota": 0.10,
-            "milestone": 0.10,          # 里程碑（终局储备）
+            "chapter_brief": 0.08,
+            "character_cards": 0.08,
+            "recent_summaries": 0.16,
+            "foreshadowing": 0.30,      # 回收期，伏笔信息量最大
+            "rhythm_quota": 0.08,
+            "outline_anchor": 0.06,
+            "entity_context": 0.04,
+            "character_state": 0.06,
+            "world_setting": 0.04,
+            "style_anchor": 0.03,
+            "milestone": 0.07,          # 里程碑（终局储备）
         },
     },
 }

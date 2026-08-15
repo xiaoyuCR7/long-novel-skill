@@ -18,10 +18,16 @@ _SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 if _SCRIPT_DIR not in sys.path:
     sys.path.insert(0, _SCRIPT_DIR)
 try:
-    from common import BM25Index, tokenize_chinese
+    from common import (BM25Index, tokenize_chinese, load_char_names,
+                        extract_summary_fields, recency_boost, prune_cache)
     _USE_COMMON = True
 except ImportError:
     _USE_COMMON = False
+    def load_char_names(b): return []
+    def extract_summary_fields(body, char_names=None):
+        return {"summary": "", "entities": [], "emotion_tags": []}
+    def recency_boost(c, cur, decay=0.02): return 1.0
+    def prune_cache(cache, **kw): return cache
 
 RAG_INDEX_FILE = "rag_index.json"
 RAG_CACHE_FILE = "rag_cache.json"
@@ -35,7 +41,7 @@ LIGHT_SCENE_KEYWORDS = [
     "出发", "启程", "到达", "抵达", "离开", "告别", "休息", "夜宿",
 ]
 
-ENTRY_RE = re.compile(r"^###\s*第\s*(\d+)\s*章[：:\s]*(.*)$", re.M)
+ENTRY_RE = re.compile(r"^#{2,3}\s*第\s*(\d+)\s*章[：:\s]*(.*)$", re.M)
 ENTITY_FIELD_RE = re.compile(r"关键实体[：:](.*?)(?:\n\s*-\s|\n###|\Z)", re.S)
 EMOTION_FIELD_RE = re.compile(r"情绪基调[：:](.*?)(?:\n|$)", re.S)
 SUMMARY_FIELD_RE = re.compile(r"章节摘要[：:](.*?)(?:\n\s*-\s|\n关键|\n情绪|\n###|\Z)", re.S)
@@ -48,9 +54,9 @@ def _reconfigure_streams():
         except (AttributeError, OSError): pass
 
 
-def _tokenize_chinese(text):
+def _tokenize_chinese(text, extra_terms=None):
     if _USE_COMMON:
-        return tokenize_chinese(text)
+        return tokenize_chinese(text, extra_terms)
     chars = [c for c in text if c.strip() and c not in _STOP_CHARS]
     unigrams = chars
     bigrams = [text[i:i + 2] for i in range(len(text) - 1)
@@ -177,8 +183,8 @@ if not _USE_COMMON:
             return results[:top_k]
 
 
-def _make_bm25(documents):
-    if _USE_COMMON: return BM25Index(documents, k1=BM25_K1, b=BM25_B)
+def _make_bm25(documents, extra_terms=None):
+    if _USE_COMMON: return BM25Index(documents, k1=BM25_K1, b=BM25_B, extra_terms=extra_terms)
     return BM25Index(documents)
 
 
@@ -233,6 +239,27 @@ def save_rag_index(book_root, index_data):
         json.dump(index_data, f, ensure_ascii=False, indent=2)
 
 
+def _migrate_legacy_index(book_root, old_index):
+    """迁移 legacy retrieval_index.json（v6.x 旧检索脚本产物）→ rag_index.json。
+
+    仅当 rag_index.json 不存在且 legacy 存在时执行一次；失败静默（fail-open）。
+    """
+    if old_index is not None:
+        return
+    legacy = os.path.join(book_root, "追踪", "retrieval_index.json")
+    if not os.path.isfile(legacy):
+        return
+    try:
+        with open(legacy, "r", encoding="utf-8-sig") as f:
+            data = json.load(f)
+        if isinstance(data, dict) and "chapters" in data:
+            data["version"] = INDEX_VERSION
+            save_rag_index(book_root, data)
+            print(f"[迁移] legacy retrieval_index.json → rag_index.json（{len(data['chapters'])} 章）")
+    except (OSError, ValueError):
+        pass
+
+
 def load_rag_cache(book_root):
     path = _rag_cache_path(book_root)
     if not os.path.isfile(path): return {}, path
@@ -248,8 +275,9 @@ def save_rag_cache(book_root, cache):
         json.dump(cache, f, ensure_ascii=False, indent=2)
 
 
-def _cache_key(query, top_k, light=False, index_hash=""):
-    raw = json.dumps({"q": query, "top": top_k, "light": light, "ih": index_hash}, ensure_ascii=False)
+def _cache_key(query, top_k, light=False, index_hash="", current_chapter=None):
+    raw = json.dumps({"q": query, "top": top_k, "light": light, "ih": index_hash,
+                      "cur": current_chapter}, ensure_ascii=False)
     return hashlib.md5(raw.encode("utf-8")).hexdigest()
 
 
@@ -296,6 +324,9 @@ def cmd_build(book_root):
     old_chapters = {}
     if old_index and "chapters" in old_index:
         for ch in old_index["chapters"]: old_chapters[ch["chapter"]] = ch
+    # legacy retrieval_index.json 迁移（v6.x 旧检索脚本产物）
+    _migrate_legacy_index(book_root, old_index)
+    char_names = load_char_names(book_root)
     updated, skipped = 0, 0
     new_entries = []
     for chap, basename, file_path in chapters:
@@ -305,12 +336,10 @@ def cmd_build(book_root):
             char_count = len(re.sub(r"\s+", "", content))
         except (OSError, ValueError): char_count = 0
         entry_body = summary_entries.get(chap, "")
-        summary_text = _extract_summary_text(entry_body)
-        entities = []; emotion_tags = []
-        if entry_body:
-            em = ENTITY_FIELD_RE.search(entry_body)
-            if em: entities = _parse_entities(em.group(1))
-            emotion_tags = _extract_emotion_tags(entry_body)
+        fields = extract_summary_fields(entry_body, char_names)
+        summary_text = fields["summary"]
+        entities = fields["entities"]
+        emotion_tags = fields["emotion_tags"]
         title_match = re.search(r"第\s*\d+\s*章[：:\s]*(.*)\.md$", basename)
         title = title_match.group(1).strip() if title_match else ""
         if not title and entry_body:
@@ -347,7 +376,26 @@ def _normalize_score(score, max_score):
     return min(score / max_score, 1.0)
 
 
-def rag_query(book_root, query, top_k=5, light=False):
+def _weighted_doc(ch):
+    """构造字段加权文档：title×3、entities×2、emotion_tags×1、summary×1。
+
+    通过重复 token 实现加权（BM25 对词频敏感），零新依赖。
+    """
+    parts = []
+    title = (ch.get("title") or "").strip()
+    if title:
+        parts.append(" ".join([title] * 3))
+    ents = ch.get("entities") or []
+    if ents:
+        parts.append(" ".join([" ".join(ents)] * 2))
+    emo = ch.get("emotion_tags") or []
+    if emo:
+        parts.append(" ".join(emo))
+    parts.append(ch.get("summary") or "")
+    return " ".join(parts)
+
+
+def rag_query(book_root, query, top_k=5, light=False, current_chapter=None):
     index_data, _ = load_rag_index(book_root)
     if not index_data or "chapters" not in index_data:
         return {"query": query, "triggered": False, "cache_hit": False, "results": [],
@@ -356,7 +404,8 @@ def rag_query(book_root, query, top_k=5, light=False):
     if not chapters:
         return {"query": query, "triggered": False, "cache_hit": False, "results": [],
                 "context_suggestion": None, "error": "索引为空"}
-    query_tokens = _tokenize_chinese(query)
+    extra_terms = sorted({e for ch in chapters for e in (ch.get("entities") or []) if len(e) >= 2})
+    query_tokens = _tokenize_chinese(query, extra_terms)
     if light or is_light_scene(query):
         results = []; query_set = set(query_tokens)
         for ch in chapters:
@@ -375,10 +424,8 @@ def rag_query(book_root, query, top_k=5, light=False):
                 "results": results, "context_suggestion": None}
     docs = []
     for ch in chapters:
-        text_parts = [ch.get("summary", ""), " ".join(ch.get("entities", [])),
-                       " ".join(ch.get("emotion_tags", [])), ch.get("title", "")]
-        docs.append((ch["chapter"], " ".join(text_parts)))
-    bm25 = _make_bm25(docs)
+        docs.append((ch["chapter"], _weighted_doc(ch)))
+    bm25 = _make_bm25(docs, extra_terms)
     coarse = bm25.search(query_tokens, top_k=8)
     if not coarse:
         return {"query": query, "triggered": True, "cache_hit": False, "results": [], "context_suggestion": None}
@@ -394,7 +441,7 @@ def rag_query(book_root, query, top_k=5, light=False):
     max_combined = 0.0; raw_results = []
     for chap, tfidf_score, matched in reranked:
         bm25_score = bm25_scores.get(chap, 0)
-        combined = bm25_score * 0.6 + tfidf_score * 0.4
+        combined = (bm25_score * 0.6 + tfidf_score * 0.4) * recency_boost(chap, current_chapter)
         ch = chapter_map.get(chap)
         if not ch: continue
         matched_keywords = []
@@ -448,19 +495,21 @@ def cmd_query(book_root, args):
     if not args.query: print("错误：query 模式需要查询文本", file=sys.stderr); return 2
     query = args.query
     cache, _ = load_rag_cache(book_root)
+    cache = prune_cache(cache)
     index_data, _ = load_rag_index(book_root)
     ih = _index_hash(index_data)
-    key = _cache_key(query, args.top, args.light, ih)
+    cur = getattr(args, "current_chapter", None)
+    key = _cache_key(query, args.top, args.light, ih, cur)
     if key in cache:
         cached = cache[key]
         print(f"（命中查询缓存，查询时间：{cached.get('time', '?')}）")
         result = cached["result"]; result["cache_hit"] = True
     else:
-        result = rag_query(book_root, query, args.top, args.light)
+        result = rag_query(book_root, query, args.top, args.light, cur)
         if result.get("error"): print(f"错误：{result['error']}", file=sys.stderr); return 2
         cache[key] = {"query": query, "top": args.top, "light": args.light,
                        "index_hash": ih, "time": time.strftime("%Y-%m-%d %H:%M:%S"), "result": result}
-        save_rag_cache(book_root, cache)
+        save_rag_cache(book_root, prune_cache(cache))
     if not result.get("triggered", False): print("检索未触发"); return 1
     light_tag = " [轻场景·快速匹配]" if result.get("light_mode") else ""
     print(f"RAG 检索结果（查询：{repr(query)}）{light_tag}")
@@ -512,6 +561,7 @@ def main():
     ap.add_argument("query", nargs="?", default=None)
     ap.add_argument("--top", type=int, default=5)
     ap.add_argument("--light", action="store_true")
+    ap.add_argument("--current-chapter", type=int, default=None, help="当前章节号（用于 recency 加权）")
     args = ap.parse_args()
     book_root = os.path.abspath(args.book_root)
     if args.mode == "build": return cmd_build(book_root)

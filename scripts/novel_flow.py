@@ -683,6 +683,18 @@ def _cmd_prepare_inner(book_dir: Path, chapter: int, args) -> Dict[str, Any]:
         "output": stdout[:300] if stdout else stderr[:200],
     })
 
+    # Step 7: 情节建议（基于记忆的下一章方向参考）
+    rc, stdout, stderr = run_script(
+        "plot_suggest.py",
+        [str(book_dir), "--chapter", str(chapter)],
+        book_dir
+    )
+    result["steps"].append({
+        "name": "plot_suggest",
+        "success": rc == 0,
+        "output": stdout[:300] if stdout else stderr[:200],
+    })
+
     result["all_ready"] = all(s["success"] for s in result["steps"])
     return result
 
@@ -795,6 +807,18 @@ def cmd_track(book_dir: Path, chapter: int) -> Dict[str, Any]:
     )
     result["steps"].append({
         "name": "entity_index_build",
+        "success": rc == 0,
+        "output": stdout[:200] if stdout else stderr[:200],
+    })
+
+    # Step 2.5: RAG 索引重建（rich 索引：摘要/实体/情绪，供语义检索）
+    rc, stdout, stderr = run_script(
+        "rag_retriever.py",
+        ["build", str(book_dir)],
+        book_dir
+    )
+    result["steps"].append({
+        "name": "rag_index_build",
         "success": rc == 0,
         "output": stdout[:200] if stdout else stderr[:200],
     })

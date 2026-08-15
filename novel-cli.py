@@ -142,6 +142,14 @@ def cmd_event(args):
     return run_script("event_matrix", args)
 
 
+def cmd_plot_suggest(args):
+    """基于记忆的情节建议（伏笔+锚点+节奏+角色线）"""
+    if len(args) < 1:
+        print("用法: novel-cli plot-suggest <书名目录> --chapter <章节号>")
+        return 1
+    return run_script("plot_suggest", args)
+
+
 def cmd_gate_repair(args):
     """门禁修复"""
     if len(args) < 2:
@@ -398,6 +406,7 @@ COMMANDS = {
     "outline": cmd_outline,
     "graph": cmd_graph,
     "rag": cmd_rag,            # RAG检索
+    "plot-suggest": cmd_plot_suggest,  # 情节建议
     "beat": cmd_beat,
     "gate-repair": cmd_gate_repair,
     "normalize": cmd_normalize,

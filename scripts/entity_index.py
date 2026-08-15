@@ -12,7 +12,7 @@ import os
 import re
 import sys
 
-ENTRY_RE = re.compile(r"^###\s*第\s*(\d+)\s*章.*$", re.M)
+ENTRY_RE = re.compile(r"^#{2,3}\s*第\s*(\d+)\s*章.*$", re.M)
 ENTITY_FIELD_RE = re.compile(r"关键实体[：:](.*?)(?:\n\s*-\s|\n###|\Z)", re.S)
 
 # --- 从 common.py 导入共享实现（v2.1） ---
@@ -21,10 +21,15 @@ if _SCRIPT_DIR not in sys.path:
     sys.path.insert(0, _SCRIPT_DIR)
 
 try:
-    from common import BM25Index, tokenize_chinese
+    from common import (BM25Index, tokenize_chinese, load_char_names,
+                        extract_summary_fields, prune_cache)
     _USE_COMMON = True
 except ImportError:
     _USE_COMMON = False
+    def load_char_names(b): return []
+    def extract_summary_fields(body, char_names=None):
+        return {"summary": "", "entities": [], "emotion_tags": []}
+    def prune_cache(cache, **kw): return cache
 
 import math
 import time
@@ -69,16 +74,15 @@ def build_index(book_root):
     with open(summary, "r", encoding="utf-8-sig") as f:
         text = f.read()
     entries = list(ENTRY_RE.finditer(text))
+    char_names = load_char_names(book_root)
     index = {}
     for idx, m in enumerate(entries):
         chap = int(m.group(1))
         start = m.start()
         end = entries[idx + 1].start() if idx + 1 < len(entries) else len(text)
         body = text[start:end]
-        fm = ENTITY_FIELD_RE.search(body)
-        if not fm:
-            continue
-        for ent in parse_entities(fm.group(1)):
+        fields = extract_summary_fields(body, char_names)
+        for ent in fields["entities"]:
             index.setdefault(ent, [])
             if chap not in index[ent]:
                 index[ent].append(chap)
@@ -202,9 +206,18 @@ def _query_cache_path(book_root):
     return os.path.join(book_root, "追踪", "query_cache.json")
 
 
-def _cache_key(queries, top_k, light=False):
-    raw = json.dumps({"q": queries, "top": top_k, "light": light}, ensure_ascii=False)
+def _cache_key(queries, top_k, light=False, index_hash=""):
+    raw = json.dumps({"q": queries, "top": top_k, "light": light, "ih": index_hash}, ensure_ascii=False)
     return hashlib.md5(raw.encode("utf-8")).hexdigest()
+
+
+def _index_sig(book_root):
+    """entity_index.json 的 mtime 签名，用于缓存失效（索引重建后自动失效）。"""
+    p = os.path.join(book_root, "追踪", "entity_index.json")
+    try:
+        return str(os.path.getmtime(p))
+    except OSError:
+        return ""
 
 
 def load_query_cache(book_root):
@@ -305,7 +318,8 @@ def cmd_semantic(book_root, args):
     if not args.queries:
         print("错误：semantic 模式需要至少一个查询文本", file=sys.stderr); return 2
     cache, cache_path = load_query_cache(book_root)
-    key = _cache_key(args.queries, args.top, args.light)
+    cache = prune_cache(cache)
+    key = _cache_key(args.queries, args.top, args.light, _index_sig(book_root))
     if key in cache:
         cached = cache[key]
         print(f"（命中查询缓存，查询时间：{cached.get('time', '?')}）")
@@ -317,7 +331,7 @@ def cmd_semantic(book_root, args):
             print(f"错误：{e}", file=sys.stderr); return 2
         cache[key] = {"queries": args.queries, "top": args.top, "light": args.light,
                        "time": time.strftime("%Y-%m-%d %H:%M:%S"), "results": results}
-        save_query_cache(book_root, cache)
+        save_query_cache(book_root, prune_cache(cache))
     if not results: print(f"未找到相关章节"); return 1
     light_tag = " [轻场景·实体索引]" if (args.light or is_light_scene(args.queries)) else ""
     print(f"BM25 两级检索结果（查询：{' / '.join(repr(q) for q in args.queries)}）{light_tag}")
