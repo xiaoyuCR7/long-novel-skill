@@ -47,6 +47,7 @@ TEST_MODULES = [
     "test_ranking_crawler",
     "test_story_graph",
     "test_style_fingerprint",
+    "test_timeline_manager",
 ]
 
 # 测试目录与 scripts 目录

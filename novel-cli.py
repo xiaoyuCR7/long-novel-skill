@@ -150,6 +150,14 @@ def cmd_plot_suggest(args):
     return run_script("plot_suggest", args)
 
 
+def cmd_timeline(args):
+    """章节时间线管理（build/check/viz/anchor/status）"""
+    if len(args) < 1:
+        print("用法: novel-cli timeline <build|check|viz|anchor|status> <书名目录> [--chapter N] [--html]")
+        return 1
+    return run_script("timeline_manager", args)
+
+
 def cmd_gate_repair(args):
     """门禁修复"""
     if len(args) < 2:
@@ -407,6 +415,7 @@ COMMANDS = {
     "graph": cmd_graph,
     "rag": cmd_rag,            # RAG检索
     "plot-suggest": cmd_plot_suggest,  # 情节建议
+    "timeline": cmd_timeline,  # 时间线管理
     "beat": cmd_beat,
     "gate-repair": cmd_gate_repair,
     "normalize": cmd_normalize,

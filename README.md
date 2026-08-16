@@ -178,7 +178,7 @@ long-novel-skill/
 │   ├── agents/               # 编辑团队可部署资产（4 个角色 + README）
 │   └── style_library/        # 风格库（跨书复用）（v4.0 新增）
 │       └── index.json         # 风格库索引
-└── scripts/                  # 机械闸口与量化工具（纯标准库，无第三方依赖，共 40 个）
+└── scripts/                  # 机械闸口与量化工具（纯标准库，无第三方依赖，共 41 个）
     ├── common.py                 # 共享工具函数（文件I/O+文本处理+章节解析）（v6.0 新增）
     ├── config.py                 # 全局配置常量（目录结构+文件名+BM25参数）（v6.0 新增）
     ├── check_text.py             # 7 Gate + 字数 + 禁用词 + 毒句式 + 伏笔超期 + 量化打分 + 7类AI模式检测 + --deslop分级 + --whitelist

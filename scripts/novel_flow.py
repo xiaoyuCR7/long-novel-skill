@@ -764,6 +764,18 @@ def _cmd_check_inner(book_dir: Path, chapter: int, chapter_file: str) -> Dict[st
         "output": stdout[:300] if stdout else stderr[:200],
     })
 
+    # Step 3.5: 时间线一致性检查（倒退/跳跃/承诺/引用/分支）
+    rc, stdout, stderr = run_script(
+        "timeline_manager.py",
+        ["check", str(book_dir), "--chapter", str(chapter)],
+        book_dir
+    )
+    result["steps"].append({
+        "name": "timeline_check",
+        "success": rc in (0, 1),  # 1 = 检出 WARN/ERROR（作为提示，不阻断本章）
+        "output": stdout[:300] if stdout else stderr[:200],
+    })
+
     # Step 4: 内容扩充建议
     rc, stdout, stderr = run_script(
         "content_expander.py",

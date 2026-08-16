@@ -13,6 +13,19 @@
 - **回滚 v6.3 未完成合并**：删除 `retrieval.py`/`event_system.py`（未接线、未测试、非干净超集），`entity_index`/`rag_retriever`/`rhythm_guard`/`event_matrix` 恢复 canonical；novel-cli 命令表同步。
 - **测试全接通**：`run_tests.py` 从 10 模块扩到 20 模块，744 测试全量运行（原默认仅 189）。
 
+### 章节时间线管理模块（新增功能）
+
+- **新增 `timeline_manager.py`**：把「Agent 手写 时间线.md」升级为完整时间线系统——
+  - 解析兼容模板表格式与旧 `### 9月3日——第N章` 格式，产出机器可读 `追踪/timeline.json`。
+  - 时间归一化支持公历/自定义纪元/相对天数/时间锚点引用（`@A1±偏移`）。
+  - **五类冲突检测**：C1 时间倒退（ERROR）/ C2 静默跳跃过大（WARN）/ C3 承诺到期未兑现（WARN）/
+    C4 前文引用矛盾（WARN）/ C5 分支时间交错（WARN），中文数字（七日后）也识别。
+  - **可视化**：mermaid timeline + ASCII 表 + 自包含 HTML 时间轴（`timeline_chart.html`）。
+  - **时间锚点**：md 顶部「## 时间锚点」区块声明绝对时间参照，章节 `@A1+3` 引用。
+- **集成**：`novel_flow.py check` 增 timeline_check 步骤；`novel-cli.py timeline` 命令；`config.py` 增
+  `TIMELINE_JSON_FILE`/`TIMELINE_MAX_SILENT_GAP`/`TIMELINE_CHECK_ENABLED`。
+- **测试**：新增 `test_timeline_manager.py` 17 例（parse 两格式/normalize/锚点/C1-C5/viz），全量 761 测试通过。
+
 ---
 
 ## v6.8.0 (2026-08-10)

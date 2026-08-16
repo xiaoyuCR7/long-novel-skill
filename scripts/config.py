@@ -291,8 +291,16 @@ FLOW_SCRIPT_TIMEOUT = _env_int("FLOW_SCRIPT_TIMEOUT", 120)
 
 # 角色名一致性：正文出现的角色名必须在 设定/角色/ 有对应卡
 STATIC_CHECK_STRICT_CHARACTER = False  # 非严格模式：只报 WARN
-# 时间线一致性：章节间时间推进不能倒退
+# 时间线一致性：章节间时间推进不能倒退（static_check 的 C1 兼容检查）
 STATIC_CHECK_TIMELINE = True
+
+# =============================================================================
+# 时间线管理模块（timeline_manager.py，v7.0 新增）
+# =============================================================================
+
+TIMELINE_JSON_FILE = "timeline.json"                 # 机器可读时间线文件
+TIMELINE_MAX_SILENT_GAP = _env_int("TIMELINE_MAX_SILENT_GAP", 30)  # 相邻章静默时间跳转上限（天）
+TIMELINE_CHECK_ENABLED = True                        # 五类冲突检测开关
 # 伏笔状态一致性：正文中回收的伏笔必须在台账标记为已回收
 STATIC_CHECK_FORESHADOW = True
 
