@@ -115,6 +115,7 @@ logs/
 # Project-specific — local tool caches
 # ============================================================
 .impeccable/
+.worktrees/
 
 # ============================================================
 # Skill packaging artifacts
