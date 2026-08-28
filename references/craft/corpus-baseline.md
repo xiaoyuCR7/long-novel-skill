@@ -42,7 +42,7 @@
 
 ### 句长与 `style_fingerprint.py` 的对接
 
-`style_fingerprint.md` 定义的「平均句长」维度（句号/问号/感叹号切分后的平均字数），
+`style-fingerprint.md` 定义的「平均句长」维度（句号/问号/感叹号切分后的平均字数），
 其典型范围 12-25 字。本文件将这一范围精确化为：
 
 - **网文黄金区间**：22-24 字（整句平均）
@@ -110,7 +110,7 @@ AI 写的文本，逗号比例往往偏低（65-70%），句号比例偏高（20
 
 ### 对话占比与 `style_fingerprint.py` 的对接
 
-`style_fingerprint.md` 定义的「对话占比」维度，典型范围 20%-60%。本文件按题材
+`style-fingerprint.md` 定义的「对话占比」维度，典型范围 20%-60%。本文件按题材
 拆分这一范围，使 `style_fingerprint.py compare` 的报警更精确：
 
 - 写玄幻时，对话占比超过 35% → 报警（对话偏多，节奏可能偏慢）
@@ -126,7 +126,7 @@ AI 写的文本，逗号比例往往偏低（65-70%），句号比例偏高（20
 | 指标 | 基准值 | 说明 |
 |---|---|---|
 | 段落中位行数 | 3-5 行（手机屏幕） | 约 60-100 字/段 |
-| 段落中位字数 | 40-80 字 | `style_fingerprint.md` 的段落中位长度维度 |
+| 段落中位字数 | 40-80 字 | `style-fingerprint.md` 的段落中位长度维度 |
 | 段落长度上限 | 8 行（手机屏幕） | 约 160 字，超过即「长段落」 |
 | 长段落占比 | ≤10% | 每章长段落（>8 行）不超过总段落数的 10% |
 | 单行段（1-2 行）占比 | 20-30% | 动作强调、对话穿插、节奏断点 |
@@ -151,7 +151,7 @@ AI 写的段落往往是「每段 3-4 行」的等长排列——这也是 Gate 
 
 ### 段落长度与 `style_fingerprint.py` 的对接
 
-`style_fingerprint.md` 定义的「段落中位长度」维度，典型范围 30-80 字。本文件补充：
+`style-fingerprint.md` 定义的「段落中位长度」维度，典型范围 30-80 字。本文件补充：
 
 - **手机友好区间**：40-60 字（段落中位字数）
 - **段落中位长度 > 80 字**：段落偏长，手机阅读体验下降，建议拆分
@@ -380,7 +380,7 @@ python scripts/check_text.py "正文/第XXX章.md" --min-chars 3000 --max-chars 
 
 #### 校准流程中的阈值判断
 
-`style_fingerprint.md` 的校准流程（每 5-10 章一次），在使用 `compare` 命令时，
+`style-fingerprint.md` 的校准流程（每 5-10 章一次），在使用 `compare` 命令时，
 增加以下判断：
 
 | 偏离维度 | 偏离阈值 | 处理 |
@@ -394,9 +394,10 @@ python scripts/check_text.py "正文/第XXX章.md" --min-chars 3000 --max-chars 
 ### 基准的题材自适应
 
 本文件的基准数据应按题材和平台自动选择。建议在 `style_fingerprint.py` 中增加
-`--genre` 和 `--platform` 参数：
+`--genre` 和 `--platform` 参数。以下为未实现的接口提案，不是当前可执行命令；目前需人工选择
+基准并写成文风锚，再用现有 compare 的第二个位置参数传入：
 
-```bash
+```text
 # 自动按题材和平台选择基准
 python scripts/style_fingerprint.py compare tmp_fp.md "设定/文风锚.md" \
   --genre 玄幻 --platform 起点

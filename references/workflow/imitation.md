@@ -280,7 +280,7 @@ Stage 4-6 可以后续补。
 |---|---|---|
 | `对标/{书名}/` | `deconstruct-pipeline.md` 产出 | 对标书的完整拆解资产 |
 | `对标/{书名}/情绪模块库/` | `emotional-arc.md` 拆文提取流程 | 可复用的情绪模块卡 |
-| `对标/{书名}/文风指纹.md` | `style-fingerprint.md` 提取 | 六维文风基线 |
+| `对标/{书名}/文风指纹.md` | `references/craft/style-fingerprint.md` 提取 | 六维文风基线 |
 
 ### 输出文件（仿写中产出）
 

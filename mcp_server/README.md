@@ -27,7 +27,7 @@ python server.py --http --port 8000
 ### 配置MCP客户端
 
 #### Claude Desktop
-在 `claude_desktop_config.json` 中添加：
+在 `{用户配置目录}/claude_desktop_config.json` 中添加：
 ```json
 {
   "mcpServers": {
@@ -40,7 +40,7 @@ python server.py --http --port 8000
 ```
 
 #### Cursor
-在 `.cursor/mcp.json` 或全局设置中添加：
+在 `{项目目录}/.cursor/mcp.json` 或全局设置中添加：
 ```json
 {
   "mcpServers": {
@@ -53,7 +53,7 @@ python server.py --http --port 8000
 ```
 
 #### TRAE
-在 `.trae/mcp.json` 中添加：
+在 `{项目目录}/.trae/mcp.json` 中添加：
 ```json
 {
   "mcpServers": {
@@ -79,7 +79,7 @@ python server.py --http --port 8000
 }
 ```
 
-## 工具列表（26个）
+## 工具列表（24个）
 
 | 工具名 | 功能 | 只读 | 破坏性 |
 |--------|------|------|--------|

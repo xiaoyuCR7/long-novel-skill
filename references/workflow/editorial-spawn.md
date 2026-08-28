@@ -2,7 +2,7 @@
 
 定义编辑团队从快照到关闭的完整 8 步生命周期，以及四角色 Agent 的 spawn 规则、并行编排、
 SendMessage/TeamDelete 生命周期管理、防死循环、降级协议、状态持久化。角色人设定义见
-`assets/agents/`（含 `README.md` 与四个角色 `.md` 文件），方法论见
+`assets/agents/`（含 `assets/agents/README.md` 与四个角色 `.md` 文件），方法论见
 `references/craft/editorial-team.md`。**本文档只管「怎么把这四个 Agent 编排跑起来」，
 不管角色本身怎么定义。**
 
@@ -126,7 +126,7 @@ python scripts/resume.py "{书名}" --json
 
 **策划主编输出**：Chapter Brief（格式见 `references/craft/editorial-team.md` 的模板）。
 
-**状态更新**：`editorial_state.json` 的 `planning-editor.status` → `done`。
+**状态更新**：`追踪/editorial_state.json` 的 `planning-editor.status` → `done`。
 
 ### Step 4：写作（写作特工按 Brief 写正文）
 
@@ -162,7 +162,7 @@ python scripts/resume.py "{书名}" --json
 
 P0 触发 → 不进入 Step 5，直接回 Step 4 重写（计入返工轮次）。
 
-**状态更新**：`editorial_state.json` 的 `novelist.status` → `done`，记录 `word_count` 和
+**状态更新**：`追踪/editorial_state.json` 的 `novelist.status` → `done`，记录 `word_count` 和
 `output_clean`。
 
 ### Step 5：并行审核（反AI编辑 + 连载核实官）
@@ -262,7 +262,7 @@ S4：伏笔操作与台账一致（该埋的埋了、该收的收了）
 - 返工轮次 = 2（第 3 次仍有 P0）→ 强制人工，不再重写。
 - 连续 3 章「有条件通过」→ 强制人工，说明系统性问题。
 
-**状态更新**：`editorial_state.json` 的 `result` 字段写入裁决结果（`pass` /
+**状态更新**：`追踪/editorial_state.json` 的 `result` 字段写入裁决结果（`pass` /
 `conditional_pass` / `rewrite` / `human_needed`）。
 
 ### Step 7：记录（审核结果落盘）
@@ -319,7 +319,7 @@ S4：伏笔操作与台账一致（该埋的埋了、该收的收了）
 - **Fallback 追踪**：哪些角色经常降级 solo，是否需要修复 agents 部署。
 - **成本核算**：统计团队模式的实际 token 消耗，优化使用频率。
 
-**更新 `editorial_state.json`**：把本轮最终结果同步到状态文件，供断点恢复使用。
+**更新 `追踪/editorial_state.json`**：把本轮最终结果同步到状态文件，供断点恢复使用。
 
 ### Step 8：关闭（清理临时上下文）
 
@@ -327,10 +327,10 @@ S4：伏笔操作与台账一致（该埋的埋了、该收的收了）
 
 **关闭动作**（TeamDelete）：
 1. 本轮记录的 `result` 字段写入最终结果（`pass` / `conditional_pass` / `human_needed`）。
-2. `team_end` 时间戳写入 `editorial_state.json`。
+2. `team_end` 时间戳写入 `追踪/editorial_state.json`。
 3. 如果使用了 spawn 的子 Agent，确保子 Agent 会话已结束（不残留后台进程）。
 4. 释放本章占用的上下文（团队模式上下文膨胀快，一章结束后及时清理）。
-5. `editorial_state.json` 的 `status` 标记为 `closed`。
+5. `追踪/editorial_state.json` 的 `status` 标记为 `closed`。
 
 **TeamDelete 不是删除日志文件**——`editorial_review_ch{XXX}.json` 是永久记录，每章每轮
 都保留。TeamDelete 是结束本轮编排状态，让总编辑回到单 Agent 模式。
@@ -360,13 +360,13 @@ S4：伏笔操作与台账一致（该埋的埋了、该收的收了）
 TeamCreate（Step 2） → Agent spawn × 4 → SendMessage 传递 → 汇总判定 → TeamDelete（Step 8）
 ```
 
-- **TeamCreate**：Step 2 声明四角色，初始化 `editorial_state.json`。
+- **TeamCreate**：Step 2 声明四角色，初始化 `追踪/editorial_state.json`。
 - **Agent spawn**：按需 spawn，不是一次性全 spawn。策划主编先 spawn，产出 Brief 后才
   spawn 写作特工；写作特工产出正文后才并行 spawn 两个审核角色。
-- **TeamDelete**：Step 8 关闭。关闭后 `editorial_state.json` 标记 `closed`，子 Agent 会话
+- **TeamDelete**：Step 8 关闭。关闭后 `追踪/editorial_state.json` 标记 `closed`，子 Agent 会话
   结束，临时上下文清理。
 
-**异常处理**：如果 Step 1–7 中途因崩溃/超时中断，`editorial_state.json` 的 `status` 会
+**异常处理**：如果 Step 1–7 中途因崩溃/超时中断，`追踪/editorial_state.json` 的 `status` 会
 停留在非 `closed` 状态。下次进入时检测到未关闭的团队 → 询问用户「上一轮团队流程未正常
 结束，是否恢复？」→ 恢复则从断点 Step 继续，不恢复则强制 TeamDelete 后重新开始。
 
@@ -547,7 +547,7 @@ Fallback 链。本文档是 spawn 协议——定义怎么把这四个角色编�
 - **角色不越权**：写作特工不改情节，反AI编辑不改情节只改 AI 腔，连载核实官不改正文
   只出报告。情节变更必须经总编辑裁决，涉及主线的经作者确认（铁律第 6 条）。
 - **上下文隔离**：写作特工只收 Brief，不收其他角色的分析——防止审核意见污染正文。
-- **日志必记**：每步每个角色的状态都要写入 `editorial_state.json` 和
+- **日志必记**：每步每个角色的状态都要写入 `追踪/editorial_state.json` 和
   `editorial_review_ch{XXX}.json`，不依赖对话记忆。会话中断后靠日志恢复，不靠「我还记得」。
 - **Fallback 透明**：任何角色降级 solo 都要在日志和最终报告中标注，作者有权知道
   这章是不是「完整团队」产出的。

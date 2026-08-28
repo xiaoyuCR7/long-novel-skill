@@ -142,7 +142,7 @@
 
 #### foreshadowing（伏笔操作）
 
-本章的伏笔状态变化，用于 `foreshadowing.py` 追踪伏笔生命周期。
+本章的伏笔状态变化，用于 规划中的 foreshadowing.py（未提供） 追踪伏笔生命周期。
 
 | 字段 | 类型 | 说明 |
 |---|---|---|
@@ -152,7 +152,7 @@
 
 #### character_appearances（角色出现）
 
-本章每个出场角色的详细状态，用于 `character_state.py` 追踪角色弧线。
+本章每个出场角色的详细状态，用于 规划中的 character_state.py（未提供） 追踪角色弧线。
 
 | 字段 | 类型 | 说明 |
 |---|---|---|
@@ -257,11 +257,12 @@
 
 ## 轻量生成脚本 chapter_meta.py 接口规范
 
-`chapter_meta.py` 是生成元数据文件的轻量脚本。本节只定义接口规范，不实现完整脚本。
+chapter_meta.py 是规划中的轻量生成脚本，本仓库尚未提供。本节仅定义接口提案；以下 text
+片段不可执行，当前由 Agent 按上述 schema 人工生成与核对元数据。
 
 ### 命令行接口
 
-```bash
+```text
 python scripts/chapter_meta.py generate \
   --chapter-number 137 \
   --chapter-file "正文/第137章.md" \
@@ -337,7 +338,7 @@ def generate_meta(chapter_number, chapter_file, tracking_dir):
 
 ### 批量生成
 
-```bash
+```text
 # 为指定范围的章节生成元数据
 python scripts/chapter_meta.py batch \
   --from 1 \
@@ -349,7 +350,7 @@ python scripts/chapter_meta.py batch \
 
 ### 增量更新
 
-```bash
+```text
 # 只为「有正文但缺少元数据」的章节生成元数据
 python scripts/chapter_meta.py sync \
   --chapter-dir "正文/" \

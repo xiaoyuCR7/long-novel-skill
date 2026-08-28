@@ -37,9 +37,13 @@
 
 （接上一章的哪个钩子/场面，用动作或对话开场，不用叙述回顾）
 
-## 章尾钩子
+## 章尾钩子 / 闭合
 
-（类型：新危机 / 新信息 / 新人物 / 选择悬置 / 反转半句——具体内容）
+- ending_mode：[serial / closed / finale，与章意图一致]
+- hook_question：（serial 填已授权事件引出的具体问题；closed/finale 留空，不补新危机或下章预告）
+- closure_requirements：（closed/finale 填本章或全书必须兑现的结果、互动和余韵；serial 无要求可为空）
+
+钩子与闭合都不能越过章纲授权或 forbidden_releases，不用未授权新人物、新信息或反转凑结尾。
 
 ## 伏笔操作
 

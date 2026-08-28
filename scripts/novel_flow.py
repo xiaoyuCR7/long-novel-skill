@@ -273,6 +273,21 @@ def acquire_lock(book_dir: Path, command: str, chapter: Optional[int] = None) ->
     Returns:
         (success, message) — 成功返回 (True, "")，失败返回 (False, 原因)
     """
+    from chapter_transaction import TransactionError, transaction_lock
+    try:
+        # Share the prepare critical section: pending check and legacy lock
+        # creation must not straddle the new transaction's journal creation.
+        with transaction_lock(book_dir):
+            return _acquire_lock_inner(book_dir, command, chapter)
+    except (TransactionError, OSError) as exc:
+        return False, "执行锁冲突: " + str(exc)
+
+
+def _acquire_lock_inner(book_dir: Path, command: str, chapter: Optional[int]) -> Tuple[bool, str]:
+    """Legacy PID/expiry semantics, called only while holding transaction_lock."""
+    from chapter_transaction import pending_transaction, recovery_command
+    if pending_transaction(book_dir):
+        return False, "transaction_incomplete: " + recovery_command(book_dir)
     lock_file = _lock_path(book_dir)
 
     # 检查锁是否已存在
@@ -587,6 +602,10 @@ def cmd_status(book_dir: Path, args) -> Dict[str, Any]:
 
 def cmd_prepare(book_dir: Path, chapter: int, args) -> Dict[str, Any]:
     """prepare 命令 — 写前准备（带执行锁保护）"""
+    from chapter_transaction import pending_transaction, recovery_command
+    if pending_transaction(book_dir):
+        return {"chapter": chapter, "steps": [], "all_ready": False,
+                "error": "transaction_incomplete: " + recovery_command(book_dir)}
     # 获取执行锁
     ok, err = acquire_lock(book_dir, "prepare", chapter)
     if not ok:
@@ -644,8 +663,11 @@ def _cmd_prepare_inner(book_dir: Path, chapter: int, args) -> Dict[str, Any]:
     result["steps"].append({
         "name": "context_select",
         "success": rc == 0,
-        "output": stdout[:500] if stdout else stderr[:300],
+        "output": stdout if stdout else stderr,
     })
+    if rc != 0:
+        result["all_ready"] = False
+        return result
 
     # Step 4: 实体检索
     rc, stdout, stderr = run_script(
@@ -1173,8 +1195,11 @@ def main():
                 status = "✅" if step["success"] else "❌"
                 print(f"{status} {step['name']}")
                 if step.get("output"):
-                    print(f"   {step['output'][:200]}")
+                    output = step["output"] if step["name"] == "context_select" else step["output"][:200]
+                    print(f"   {output}")
             print(f"\n{'✅ 准备就绪' if result['all_ready'] else '❌ 准备失败'}")
+        if not result["all_ready"]:
+            sys.exit(1)
 
     elif args.command == "check":
         book_dir = find_book_dir(args.book_dir)

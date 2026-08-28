@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "chapter": 0,
+  "goal": "",
+  "state_before": "",
+  "trigger": "",
+  "choice_or_cost": "",
+  "state_after": "",
+  "allowed_events": [],
+  "forbidden_releases": [],
+  "emotion_transition": "",
+  "pacing_tier": "medium",
+  "quota": "none",
+  "ending_mode": "serial",
+  "hook_question": "",
+  "closure_requirements": [],
+  "style_authority": "",
+  "sources": []
+}

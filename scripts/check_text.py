@@ -83,6 +83,7 @@ v2.1 新增能力：
 import argparse
 import datetime
 import hashlib
+from pathlib import Path
 import json
 import os
 import re
@@ -160,6 +161,8 @@ GATE_G_PATTERNS = [
     (re.compile(r"这意味着"), "explainer-tone", "「这意味着」叙述者定性"),
     (re.compile(r"事实证明"), "explainer-tone", "「事实证明」叙述者裁判"),
 ]
+
+STYLE_EXEMPT_RULES = frozenset(rule for _, rule, _ in TOXIC_PATTERNS + GATE_G_PATTERNS)
 
 # 工程词泄漏（标题行以外正文不得出现；blocking）。角色在故事内真实阅读/讨论
 # 「第X章」文本属例外，用 <!-- 闸口:跳过 --> 或人工判断豁免。
@@ -414,7 +417,55 @@ def is_title_line(idx, line):
     return s.startswith("#") or bool(re.match(r"^第\s*\d+\s*章", s))
 
 
-def scan_lines(lines, words, whitelist=None):
+def load_style_exemptions(chapter_path, lines):
+    """Validate this book's policy and return only exact, actually hit records.
+
+    No ancestor search: chapters belong directly to the book's 正文 directory.
+    A policy never exempts author words, meta leaks, refusal, or whole chapters.
+    """
+    chapter = Path(chapter_path).resolve()
+    if chapter.parent.name != "正文":
+        return []
+    policy = chapter.parent.parent / "设定" / "文风豁免.json"
+    if not policy.exists():
+        return []
+    data = json.loads(policy.read_text(encoding="utf-8-sig"))
+    if (not isinstance(data, dict) or type(data.get("version")) is not int
+            or data["version"] != 1 or not isinstance(data.get("exemptions"), list)):
+        raise ValueError("文风豁免必须为 version=1、exemptions 数组的对象")
+    applied = []
+    for record in data["exemptions"]:
+        if (not isinstance(record, dict)
+                or any(not isinstance(record.get(key), str) or not record[key].strip()
+                       for key in ("chapter", "text", "rule", "reason", "authority"))
+                or type(record.get("line")) is not int or record["line"] < 1
+                or record["rule"] not in STYLE_EXEMPT_RULES):
+            raise ValueError("文风豁免记录须有章名、正整数行号、原文、允许的规则、理由及作者授权依据")
+        lineno = record["line"]
+        if (record["chapter"] != chapter.name or lineno > len(lines)
+                or record["text"] != lines[lineno - 1]):
+            continue
+        line = lines[lineno - 1]
+        narration = strip_dialogue(line)
+        # Toxic rules scan both domains; Gate G scans narration only.
+        hit = any(rule == record["rule"] and (pat.search(narration) or pat.search(line))
+                  for pat, rule, _ in TOXIC_PATTERNS)
+        hit = hit or any(rule == record["rule"] and pat.search(narration)
+                         for pat, rule, _ in GATE_G_PATTERNS)
+        if hit and record not in applied:
+            applied.append(record)
+    return applied
+
+
+def is_style_exempt(lineno, line, rule, style_exemptions):
+    """Match the exact original line, never its stripped/normalized preview."""
+    if rule not in STYLE_EXEMPT_RULES:
+        return False
+    return any(record["line"] == lineno and record["text"] == line
+               and record["rule"] == rule for record in (style_exemptions or []))
+
+
+def scan_lines(lines, words, whitelist=None, style_exemptions=None):
     """逐行扫描禁用词与毒句式（叙述/对话分域）。
 
     返回 (banned_hits, toxic_hits)：
@@ -437,6 +488,8 @@ def scan_lines(lines, words, whitelist=None):
                     continue
                 banned_hits.append((i, w, line.strip(), "advisory"))
         for pat, rule_id, label in TOXIC_PATTERNS:
+            if is_style_exempt(i, line, rule_id, style_exemptions):
+                continue
             m = pat.search(narration)
             if m:
                 toxic_hits.append((i, rule_id, label, m.group(0), line.strip(), "blocking"))
@@ -458,7 +511,7 @@ def scan_gate_c(lines):
     return hits
 
 
-def scan_blocking_patterns(lines):
+def scan_blocking_patterns(lines, style_exemptions=None):
     """Gate G / 工程词泄漏 / 拒绝语（叙述域 blocking）。
 
     返回 [(行号, rule_id, 标签, 匹配串, 行内容)]。标题行豁免工程词。
@@ -467,6 +520,8 @@ def scan_blocking_patterns(lines):
     for i, line in enumerate(lines, 1):
         narration = strip_dialogue(line)
         for pat, rule_id, label in GATE_G_PATTERNS + REFUSAL_PATTERNS:
+            if is_style_exempt(i, line, rule_id, style_exemptions):
+                continue
             m = pat.search(narration)
             if m:
                 hits.append((i, rule_id, label, m.group(0), line.strip()))
@@ -749,7 +804,7 @@ def scan_structure(text):
     tail_lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
     if tail_lines:
         last = tail_lines[-1]
-        if last and last[-1] not in "。！？!?\"」』…—~":
+        if last and last[-1] not in "。！？!?\"”’」』…—~":
             hits.append(("truncation", "结尾疑似截断（末行无终止标点）",
                          f"末行：{last if len(last) <= 40 else last[:37] + '...'}"))
 
@@ -882,12 +937,14 @@ def write_gate_state(chapter_path, chapter_no, result):
         "chapter": chapter_no,
         "chapter_file": os.path.basename(chapter_path),
         "chapter_mtime": st.st_mtime,
+        "chapter_sha256": hashlib.sha256(Path(chapter_path).read_bytes()).hexdigest(),
         "checked_at": datetime.datetime.now().isoformat(timespec="seconds"),
         "passed": result["passed"],
         "blocking": result["blocking"],
         "advisory": result["advisory"],
         "ai_score": result["ai_score"],
         "categories": result["categories"],
+        "style_exemptions": result.get("style_exemptions", []),
     }
     if isinstance(existing.get("rhythm"), dict):
         state["rhythm"] = existing["rhythm"]
@@ -921,6 +978,10 @@ def verify_prev_gate(chapter_path, current_chapter):
         ok = False
         msgs.append(f"上一章（第{prev}章）门禁未通过（blocking={state.get('blocking')}），"
                     f"欠账未清，禁止开写本章")
+    rhythm = state.get("rhythm")
+    if isinstance(rhythm, dict) and rhythm.get("passed") is False:
+        ok = False
+        msgs.append(f"上一章节奏配额检查未通过（fails={rhythm.get('fails')}），欠账未清，禁止开写本章")
     prev_file = state.get("chapter_file")
     recorded_mtime = state.get("chapter_mtime")
     if prev_file and recorded_mtime:
@@ -928,19 +989,17 @@ def verify_prev_gate(chapter_path, current_chapter):
         prev_path = os.path.join(book_root, "正文", prev_file)
         if os.path.isfile(prev_path):
             actual = os.stat(prev_path).st_mtime
-            if abs(actual - float(recorded_mtime)) > 1.0:
+            digest = state.get("chapter_sha256")
+            changed = (hashlib.sha256(Path(prev_path).read_bytes()).hexdigest() != digest
+                       if digest else abs(actual - float(recorded_mtime)) > 1.0)
+            if changed:
                 ok = False
                 msgs.append(f"上一章正文在过闸后有改动（{prev_file}），需重跑门禁")
     if ok:
         msgs.append(f"上一章（第{prev}章）门禁已通过"
                     f"（checked_at: {state.get('checked_at', '?')}）")
-        rhythm = state.get("rhythm")
         if isinstance(rhythm, dict):
-            if rhythm.get("passed") is False:
-                msgs.append(f"注意：上一章节奏配额检查未通过（fails={rhythm.get('fails')}），"
-                            f"建议先处理")
-            else:
-                msgs.append("上一章节奏配额检查已通过")
+            msgs.append("上一章节奏配额检查已通过")
     return ok, msgs
 
 
@@ -1226,11 +1285,11 @@ def print_degradation_report(text, words, whitelist):
     return hits
 
 
-def print_gate_report(text, lines, words, whitelist, non_ws):
+def print_gate_report(text, lines, words, whitelist, non_ws, style_exemptions=None):
     """输出 7 Gate + 扩充规则检测报告，返回 (统计字典)。"""
-    banned_hits, toxic_hits = scan_lines(lines, words, whitelist)
+    banned_hits, toxic_hits = scan_lines(lines, words, whitelist, style_exemptions)
     gate_c_hits = scan_gate_c(lines)
-    blocking_hits = scan_blocking_patterns(lines)
+    blocking_hits = scan_blocking_patterns(lines, style_exemptions)
     trailer_hits = scan_trailer(text)
     density_hits = scan_density(text, non_ws)
     structure_hits = scan_structure(text)
@@ -1435,8 +1494,75 @@ STATIC_DESC_ACTION_RATIO = 0.1  # 动作词占比 < 10% 判为静态
 # --- 句长单调检测 ---
 SENT_LEN_MONOTONY_WINDOW = 10  # 连续10句句长方差 < 5 判为单调
 
+# --- 低连接密度检测（叙述域） ---
+# 只把有语义作用的指代、时序、转折、因果和承接词当作连接信号；不鼓励为过闸口
+# 全局塞连接词。较长句本身也可形成句群，因此单独计为连接信号。
+CONNECTIVE_PATTERN = re.compile(
+    r"因此|所以|因为|由于|于是|随后|接着|等到|直到|当[^，。！？]{0,8}时|"
+    r"虽然|尽管|但是|然而|不过|却|仍|才|就|又|便|已经|仍然|"
+    r"这(?:时|才|让|使)|那(?:时|一刻)|其(?:后|中)|他(?:才|又|便)|她(?:才|又|便)"
+)
+LOW_CONNECTIVE_SHORT_RUN = 7
+LOW_CONNECTIVE_MIN_NARRATION = 220
+LOW_CONNECTIVE_MIN_SENTENCES = 10
+LOW_CONNECTIVE_LONG_SENTENCE = 18
+LOW_CONNECTIVE_SIGNAL_RATIO = 0.30
 
-def scan_ai_patterns(text, lines=None, words=None, whitelist=None):
+
+def scan_low_connective_density(text):
+    """Detect outline-like narration while preserving dialogue and short peaks.
+
+    The signal is intentionally advisory and conservative: either a sustained
+    seven-sentence staccato run or a substantial narration sample is required,
+    and both connective words and sentence groups must be scarce.
+    """
+    narration = strip_dialogue(text).replace("「」", "").replace('""', "")
+    sentences = []
+    for raw in re.split(r"[。！？!?…]+", narration):
+        sentence = re.sub(r"[\s#>*_`，,、；;：:]", "", raw)
+        if sentence:
+            sentences.append(sentence)
+    if not sentences:
+        return None
+
+    short_run = 0
+    longest_short_run = 0
+    for sentence in sentences:
+        if len(sentence) <= STUTTER_MAX_SENT:
+            short_run += 1
+            longest_short_run = max(longest_short_run, short_run)
+        else:
+            short_run = 0
+
+    narration_chars = sum(len(sentence) for sentence in sentences)
+    enough_sample = (
+        longest_short_run >= LOW_CONNECTIVE_SHORT_RUN
+        or (
+            narration_chars >= LOW_CONNECTIVE_MIN_NARRATION
+            and len(sentences) >= LOW_CONNECTIVE_MIN_SENTENCES
+        )
+    )
+    if not enough_sample:
+        return None
+
+    connective_count = len(CONNECTIVE_PATTERN.findall(narration))
+    long_sentences = sum(
+        1 for sentence in sentences if len(sentence) >= LOW_CONNECTIVE_LONG_SENTENCE
+    )
+    connected_signals = connective_count + long_sentences
+    signal_ratio = connected_signals / len(sentences)
+    if connective_count >= 2 or signal_ratio >= LOW_CONNECTIVE_SIGNAL_RATIO:
+        return None
+
+    evidence = (
+        f"叙述 {len(sentences)} 句 / {narration_chars} 字，最长短句连排 "
+        f"{longest_short_run} 句，连接信号 {connected_signals} 个；"
+        "修复缺失的指代、因果与句群连接，禁止全局填充套词"
+    )
+    return evidence
+
+
+def scan_ai_patterns(text, lines=None, words=None, whitelist=None, style_exemptions=None):
     """v3.2 综合AI模式检测：整合20种AI写作模式，返回统一格式命中列表。
 
     整合已有检测器 + 新增4种模式，输出统一结构：
@@ -1457,7 +1583,7 @@ def scan_ai_patterns(text, lines=None, words=None, whitelist=None):
     # === 已有检测器整合 ===
 
     # 1. 禁用词命中（blocking）
-    banned, toxic = scan_lines(lines, words, whitelist)
+    banned, toxic = scan_lines(lines, words, whitelist, style_exemptions)
     if banned:
         hits.append(("ai-banned-words", f"禁用词命中 {len(banned)} 处",
                      f"命中词: {', '.join(set(b[1] for b in banned[:5]))}",
@@ -1470,7 +1596,7 @@ def scan_ai_patterns(text, lines=None, words=None, whitelist=None):
                      "blocking"))
 
     # 3. 解释腔（blocking）
-    gate_g = scan_blocking_patterns(lines)
+    gate_g = scan_blocking_patterns(lines, style_exemptions)
     if gate_g:
         hits.append(("ai-explainer-tone", f"解释腔命中 {len(gate_g)} 处",
                      "上帝视角剧透/解释因果/叙述者定性",
@@ -1536,6 +1662,13 @@ def scan_ai_patterns(text, lines=None, words=None, whitelist=None):
         if rule_id in para_map:
             ai_id, label = para_map[rule_id]
             hits.append((ai_id, label, p[2], "advisory"))
+
+    low_connective = scan_low_connective_density(text)
+    if low_connective:
+        hits.append(("ai-low-connective-density",
+                     "叙述连接密度过低（像提纲/电报体）",
+                     low_connective,
+                     "advisory"))
 
     # === 新增检测器 ===
 
@@ -1875,11 +2008,11 @@ def degradation_fingerprint(degradation_hits, ai_hits=None):
     }
 
 
-def print_ai_pattern_report(text, lines=None, words=None, whitelist=None):
+def print_ai_pattern_report(text, lines=None, words=None, whitelist=None, style_exemptions=None):
     """v3.2 输出20种AI模式检测报告。"""
     if lines is None:
         lines = text.splitlines()
-    hits = scan_ai_patterns(text, lines, words, whitelist)
+    hits = scan_ai_patterns(text, lines, words, whitelist, style_exemptions)
 
     print(f"\n{'='*60}")
     print(f"  AI模式检测报告（20种模式整合扫描）")
@@ -1956,6 +2089,20 @@ def main():
 
     # 章号解析（--verify-prev / --gate-state 需要）
     chapter_no = args.current_chapter or extract_chapter_number(args.file)
+    lines = text.splitlines()
+    try:
+        style_exemptions = load_style_exemptions(args.file, lines)
+    except (OSError, ValueError) as e:
+        print(f"错误：无法使用文风豁免：{e}", file=sys.stderr)
+        if args.gate_state and chapter_no:
+            write_gate_state(args.file, chapter_no, {
+                "passed": False, "blocking": 1, "advisory": 0, "ai_score": 0.0,
+                "categories": {"style_policy_error": 1},
+            })
+        return 2
+    for record in style_exemptions:
+        print(f"文风精确豁免：第{record['line']}行 [{record['rule']}] "
+              f"{record['reason']}（授权：{record['authority']}）")
 
     # 欠账门：写本章前查验上一章
     if args.verify_prev:
@@ -2043,10 +2190,10 @@ def main():
         print_degradation_report(text, words, whitelist)
 
     if args.ai_patterns:
-        print_ai_pattern_report(text, lines, words, whitelist)
+        print_ai_pattern_report(text, lines, words, whitelist, style_exemptions)
         # 退化指纹
         deg_hits = scan_degradation(text, words, whitelist)
-        ai_hits = scan_ai_patterns(text, lines, words, whitelist)
+        ai_hits = scan_ai_patterns(text, lines, words, whitelist, style_exemptions)
         fp = degradation_fingerprint(deg_hits, ai_hits)
         print(f"\n  退化指纹: {fp['fingerprint']}")
         print(f"  AI指纹:   {fp['ai_fingerprint']}")
@@ -2063,17 +2210,15 @@ def main():
         print(f"[FAIL] 字数超限：{non_ws} > 上限 {args.max_chars}")
         failed = True
 
-    lines = text.splitlines()
-
     if args.gate_report:
-        stats = print_gate_report(text, lines, words, whitelist, non_ws)
+        stats = print_gate_report(text, lines, words, whitelist, non_ws, style_exemptions)
         if stats["blocking"]:
             failed = True
         if args.fail_on == "all" and stats["advisory"]:
             failed = True
     else:
-        banned_hits, toxic_hits = scan_lines(lines, words, whitelist)
-        blocking_hits = scan_blocking_patterns(lines)
+        banned_hits, toxic_hits = scan_lines(lines, words, whitelist, style_exemptions)
+        blocking_hits = scan_blocking_patterns(lines, style_exemptions)
         trailer_hits = scan_trailer(text)
         hits = ([(ln, "禁用词", w, line, sev) for ln, w, line, sev in banned_hits]
                 + [(ln, "毒句式", f"{label}: {match}", line, sev)
@@ -2123,6 +2268,7 @@ def main():
             "blocking": stats.get("blocking", 0),
             "advisory": stats.get("advisory", 0),
             "ai_score": stats.get("ai_score", 0.0),
+            "style_exemptions": style_exemptions,
             "categories": {k: v for k, v in stats.items()
                            if k not in ("blocking", "advisory", "ai_score", "categories")},
         })

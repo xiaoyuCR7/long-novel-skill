@@ -31,12 +31,14 @@ v1.1 新增：动态上下文窗口
 """
 
 import argparse
+import hashlib
 import json
 import os
 import re
+import stat
 import sys
 import time
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from typing import Any, Dict, List, Optional, Tuple
 
 # =========================================================
@@ -176,7 +178,7 @@ COMPRESS_THRESHOLD = 500
 # 动态阶段判定（v1.1 新增）
 # =========================================================
 
-def _estimate_total_chapters(book_dir: Path) -> Optional[int]:
+def _estimate_total_chapters(book_dir: Path, reader=None) -> Optional[int]:
     """估算全书计划章数。
 
     优先从 大纲/总纲.md 中提取「第X卷」的总章数线索，
@@ -190,7 +192,7 @@ def _estimate_total_chapters(book_dir: Path) -> Optional[int]:
     # 方法1：读总纲，查找「第X卷」以及卷内章数信息
     master_outline = outline_dir / "总纲.md"
     if master_outline.exists():
-        content = read_file_safe(master_outline)
+        content = (reader or read_file_safe)(master_outline)
         # 查找"全书X章"、"共X章"、"总计X章"等表述
         total_match = re.search(r"(?:全书|共|总计|计划).*?(\d+)\s*章", content)
         if total_match:
@@ -233,7 +235,7 @@ def _estimate_total_chapters(book_dir: Path) -> Optional[int]:
     return None
 
 
-def determine_stage(book_dir: Path, target_chapter: int) -> str:
+def determine_stage(book_dir: Path, target_chapter: int, reader=None) -> str:
     """根据目标章节与全书进度判定当前阶段。
 
     Args:
@@ -244,7 +246,7 @@ def determine_stage(book_dir: Path, target_chapter: int) -> str:
         阶段名：opening / development / deepwater / finale。
         无法推算总章数时默认返回 "development"。
     """
-    total = _estimate_total_chapters(book_dir)
+    total = _estimate_total_chapters(book_dir, reader=reader)
     if total is None or total <= 0:
         return "development"
 
@@ -285,7 +287,7 @@ def get_dynamic_budget_ratios(stage: str) -> Dict[str, float]:
 # 里程碑提取（v1.1 新增：finale 阶段终局储备）
 # =========================================================
 
-def extract_milestone_content(book_dir: Path) -> str:
+def extract_milestone_content(book_dir: Path, reader=None) -> str:
     """从总纲中提取与终局相关的段落。
 
     搜索包含「终局」「结局」「最终」「大结局」关键词的段落。
@@ -297,7 +299,7 @@ def extract_milestone_content(book_dir: Path) -> str:
     if not master_outline.exists():
         return ""
 
-    content = read_file_safe(master_outline)
+    content = (reader or read_file_safe)(master_outline)
     if not content:
         return ""
 
@@ -343,6 +345,186 @@ def read_file_safe(path: Path) -> str:
         return ""
 
 
+def _safe_source_path(book_dir: Path, relative: str) -> Path:
+    """Accept portable relative file paths only; never follow link components."""
+    if (not isinstance(relative, str) or not relative or PureWindowsPath(relative).drive
+            or relative.startswith("/") or any(c in relative for c in '\\:<>"|?*')
+            or any(ord(c) < 32 for c in relative)):
+        raise ValueError("unsafe_source_path")
+    parts = relative.split("/")
+    if any(p in {"", ".", ".."} or p.rstrip(" .") != p
+           or re.match(r"^(?:CON|PRN|AUX|NUL|COM[1-9¹²³]|LPT[1-9¹²³])(?:\.|$)", p, re.I)
+           for p in parts):
+        raise ValueError("unsafe_source_path")
+    root = Path(book_dir).absolute()
+    target = root.joinpath(*parts)
+    # Check ancestors in order before examining children (including book-root
+    # links and Windows junctions). Missing components are handled by the reader.
+    for current in [*reversed(target.parents), target]:
+        try:
+            info = current.lstat()
+        except FileNotFoundError:
+            continue
+        if stat.S_ISLNK(info.st_mode) or getattr(info, "st_file_attributes", 0) & 0x400:
+            raise ValueError("linked_source_path")
+        if current != target and not stat.S_ISDIR(info.st_mode):
+            raise ValueError("non_directory_source_parent")
+    return target
+
+
+class _ContextReader:
+    """One selection's byte snapshot; parsing and fingerprints share each read."""
+    def __init__(self, book_dir: Path):
+        self.root = Path(book_dir).absolute()
+        self.texts = {}
+        self.sources = {}
+        self.omitted = {}
+
+    def __call__(self, path: Path) -> str:
+        relative = path.absolute().relative_to(self.root).as_posix()
+        if relative in self.texts:
+            return self.texts[relative]
+        try:
+            safe = _safe_source_path(self.root, relative)
+            data = safe.read_bytes()
+            content = data.decode("utf-8").replace("\r\n", "\n").replace("\r", "\n")
+        except (OSError, ValueError) as exc:
+            self.omitted[relative] = {"path": relative, "reason":
+                "missing" if isinstance(exc, FileNotFoundError) else "unreadable_or_unsafe"}
+            self.texts[relative] = ""
+            return ""
+        self.texts[relative] = content
+        self.sources[relative] = {"path": relative, "sha256": hashlib.sha256(data).hexdigest(),
+                                  "bytes": len(data), "required": False}
+        return content
+
+    def optional(self, path: Path, budget: int) -> bool:
+        relative = path.absolute().relative_to(self.root).as_posix()
+        if budget <= 0:
+            self.omitted[relative] = {"path": relative, "reason": "budget"}
+            return False
+        return bool(self(path).strip())
+
+
+def _package_sha256(packet: Dict[str, Any]) -> str:
+    """Accidental-change detection, not a signature or a semantic truth check."""
+    payload = {key: value for key, value in packet.items() if key != "package_sha256"}
+    return hashlib.sha256(json.dumps(payload, ensure_ascii=False, sort_keys=True,
+                                    separators=(",", ":"), allow_nan=False).encode("utf-8")).hexdigest()
+
+
+def verify_context(book_dir: Path, packet: Any) -> Dict[str, Any]:
+    """Verify read sources plus explicit legacy missing-card assumptions."""
+    result = {"ready": False, "status": "malformed", "changed": [], "missing": [], "errors": []}
+    if not isinstance(packet, dict):
+        result["errors"].append("invalid_context_packet")
+        return result
+    if "source_manifest" not in packet or "package_sha256" not in packet:
+        result.update(status="unverified", errors=["context_provenance_missing"])
+        return result
+    manifest = packet["source_manifest"]
+    digest = packet["package_sha256"]
+    if (not isinstance(manifest, list) or not manifest
+            or not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{64}", digest)
+            or type(packet.get("ready")) is not bool or not isinstance(packet.get("components"), dict)
+            or not isinstance(packet.get("errors", []), list)
+            or any(not isinstance(e, str) for e in packet.get("errors", []))):
+        result["errors"].append("invalid_context_provenance")
+        return result
+    sources, seen = [], set()
+    # Validate the entire manifest before reading even its first source.
+    for source in manifest:
+        if (not isinstance(source, dict) or not isinstance(source.get("sha256"), str)
+                or not re.fullmatch(r"[0-9a-f]{64}", source["sha256"])
+                or type(source.get("bytes")) is not int or source["bytes"] < 0
+                or type(source.get("required")) is not bool):
+            result["errors"].append("invalid_source_manifest")
+            return result
+        try:
+            path = _safe_source_path(book_dir, source.get("path"))
+        except (OSError, ValueError) as exc:
+            result["errors"].append("invalid_source_path: " + str(exc))
+            return result
+        key = str(path).casefold()
+        if key in seen:
+            result["errors"].append("duplicate_source_path")
+            return result
+        seen.add(key)
+        sources.append((source, path))
+    card_component = packet["components"].get("character_cards", {})
+    if not isinstance(card_component, dict) or not isinstance(card_component.get("state_only", []), list):
+        result["errors"].append("invalid_state_only_manifest")
+        return result
+    absent_cards = []
+    for entry in card_component.get("state_only", []):
+        if (not isinstance(entry, dict) or not isinstance(entry.get("name"), str)
+                or not entry["name"] or any(c in entry["name"] for c in "/\\")
+                or entry.get("source") != "追踪/角色状态.md"):
+            result["errors"].append("invalid_state_only_manifest")
+            return result
+        relative = entry.get("missing_card")
+        if relative != "设定/角色/" + entry["name"] + ".md":
+            result["errors"].append("invalid_state_only_manifest")
+            return result
+        try:
+            path = _safe_source_path(book_dir, relative)
+        except (OSError, ValueError) as exc:
+            result["errors"].append("invalid_source_path: " + str(exc))
+            return result
+        key = str(path).casefold()
+        if key in seen or not any(s["path"] == entry["source"] and s["required"] for s, _ in sources):
+            result["errors"].append("invalid_state_only_manifest")
+            return result
+        seen.add(key)
+        absent_cards.append(relative)
+    try:
+        actual_digest = _package_sha256(packet)
+    except (TypeError, ValueError, OverflowError, RecursionError):
+        result["errors"].append("invalid_context_packet")
+        return result
+    if actual_digest != digest:
+        result.update(status="stale", errors=["package_digest_mismatch"])
+        return result
+    unreadable = False
+    for relative in absent_cards:
+        try:
+            _safe_source_path(book_dir, relative).lstat()
+        except FileNotFoundError:
+            continue
+        except ValueError:
+            result["errors"].append("invalid_source_path: " + relative)
+            return result
+        except OSError:
+            unreadable = True
+            result["errors"].append("source_unreadable: " + relative)
+            continue
+        result["changed"].append(relative)
+    for source, path in sources:
+        try:
+            # Recheck links immediately before opening, in case paths changed
+            # during manifest validation. This is not an atomic filesystem lock.
+            data = _safe_source_path(book_dir, source["path"]).read_bytes()
+        except FileNotFoundError:
+            result["missing"].append(source["path"])
+            continue
+        except ValueError:
+            result["errors"].append("invalid_source_path: " + source["path"])
+            return result
+        except OSError:
+            unreadable = True
+            result["errors"].append("source_unreadable: " + source["path"])
+            continue
+        if len(data) != source["bytes"] or hashlib.sha256(data).hexdigest() != source["sha256"]:
+            result["changed"].append(source["path"])
+    result["status"] = ("stale" if result["changed"] or result["missing"] else
+                        "unverified" if unreadable else "fresh")
+    result["errors"].extend(packet.get("errors", []))
+    if not packet["ready"] and not packet.get("errors"):
+        result["errors"].append("context_not_ready")
+    result["ready"] = result["status"] == "fresh" and packet["ready"] and not result["errors"]
+    return result
+
+
 def count_chars(text: str) -> int:
     """统计非空白字符数"""
     return len(re.sub(r"\s", "", text))
@@ -362,7 +544,8 @@ def truncate_text(text: str, max_chars: int, suffix: str = "...") -> str:
         if current + line_chars > max_chars:
             remaining = max_chars - current
             if remaining > 20:
-                result.append(line[:remaining] + suffix)
+                ending = suffix[:remaining]
+                result.append(line[:remaining - count_chars(ending)] + ending)
             break
         result.append(line)
         current += line_chars
@@ -373,19 +556,19 @@ def truncate_text(text: str, max_chars: int, suffix: str = "...") -> str:
 # 章节摘要解析
 # =========================================================
 
-def parse_chapter_summaries(book_dir: Path) -> List[Dict[str, Any]]:
+def parse_chapter_summaries(book_dir: Path, reader=None) -> List[Dict[str, Any]]:
     """解析章节摘要文件"""
     summary_file = book_dir / "追踪" / "章节摘要.md"
     if not summary_file.exists():
         return []
 
-    content = read_file_safe(summary_file)
+    content = (reader or read_file_safe)(summary_file)
     chapters = []
     current_chapter = None
 
     for line in content.split("\n"):
         # 匹配章节标题
-        match = re.match(r"##\s*第(\d+)章", line)
+        match = re.match(r"#{2,6}\s*第(\d+)章", line)
         if match:
             if current_chapter:
                 chapters.append(current_chapter)
@@ -450,6 +633,187 @@ def compress_summaries(chapters: List[Dict], from_ch: int, to_ch: int) -> str:
 # 上下文选取
 # =========================================================
 
+def _has_state_value(text: str) -> bool:
+    """Reject empty field labels, comments and explicit unfilled placeholders."""
+    text = re.sub(r"<!--.*?-->", "", text, flags=re.DOTALL)
+    placeholders = {"", "未知", "待填", "待补", "未填写", "暂无", "todo", "tbd", "n/a", "值"}
+    for line in text.splitlines():
+        if re.match(r"^\s*#{1,6}[ \t]+", line):
+            continue
+        if line.strip().startswith("|"):
+            cells = line.strip().strip("|").split("|")
+            if any(_has_state_value(cell) for cell in cells[1:]):
+                return True
+            continue
+        value = re.split(r"[:：]", line, maxsplit=1)[-1].strip(" \t\r\n-*`_|。")
+        if value.lower() not in placeholders:
+            return True
+    return False
+
+
+def _has_character_state(text: str, name: str) -> bool:
+    """Require an identity-bearing section/row, not a relationship mention."""
+    text = re.sub(r"<!--.*?-->", "", text, flags=re.DOTALL)
+    state_fields = {"当前状态", "当前身份", "当前能力", "关键关系", "状态变更记录", "关键认识与依据",
+                    "位置", "伤势", "持有物", "目标", "行动", "能力", "关系", "知识边界", "身份", "物品", "限制"}
+    def is_state_field(title):
+        title = title.strip(" *`\r")
+        # Recognizable property headings, including ordinary compound labels;
+        # unknown person headings must not lend their facts to the parent.
+        return title in state_fields or bool(re.fullmatch(
+            r"(?:当前|最新|身体|生理|心理|本章|长期|短期|近期)?(?:状态|状况|情况|目标)", title))
+    headings = list(re.finditer(r"^(#{1,6})[ \t]+([^\n]+)$", text, re.MULTILINE))
+    for index, heading in enumerate(headings):
+        if heading.group(2).strip(" *`\r") != name:
+            continue
+        end = next((other.start() for other in headings[index + 1:]
+                    if len(other.group(1)) <= len(heading.group(1))
+                    or not is_state_field(other.group(2))), len(text))
+        if _has_state_value(text[heading.end():end]):
+            return True
+    for line in text.splitlines():
+        cells = [cell.strip(" *`") for cell in line.strip().strip("|").split("|")]
+        if len(cells) > 1 and cells[0] == name and any(_has_state_value(cell) for cell in cells[1:]):
+            return True
+        if (re.match(r"^\s*(?:[-*]\s+)?(?:\*\*)?" + re.escape(name)
+                     + r"(?:\*\*)?\s*[:：]\s*\S", line) and _has_state_value(line)):
+            return True
+    return False
+
+
+_CARD_FIELDS = re.compile(
+    r"基本信息|身份|职业|姓名|年龄|性格|稳定事实|不变量|动机|目标|底线|恐惧|软肋|"
+    r"知识|知情|声线|口癖|口头禅|语气|能力|关系|禁忌|原则|价值观")
+
+
+def _select_character_card(content: str) -> Dict[str, Any]:
+    """Keep semantic constraints whole; omit only explicitly optional safe blocks.
+
+    Unknown sections are not assumed irrelevant. A table/field inside an optional
+    section can still carry a constraint, so keep the entire section in that case.
+    """
+    lines = content.splitlines(keepends=True)
+    headings = []
+    semantic_lines = []
+    for index, line in enumerate(lines):
+        heading = re.match(r"^(#{1,6})[ \t]+(.+?)\s*$", line)
+        if heading:
+            headings.append((index, len(heading.group(1)), heading.group(2)))
+            if _CARD_FIELDS.search(heading.group(2)):
+                semantic_lines.append(index)
+        elif line.lstrip().startswith("|"):
+            if _CARD_FIELDS.search(line):
+                semantic_lines.append(index)
+        else:
+            field = re.match(r"^\s*(?:[-*]\s*)?(?:\*\*)?([^:：\n]+?)(?:\*\*)?[:：]", line)
+            if field and _CARD_FIELDS.search(field.group(1)):
+                semantic_lines.append(index)
+    keep = [True] * len(lines)
+    omitted = []
+    if semantic_lines:
+        for position, (start, level, title) in enumerate(headings):
+            if not keep[start] or not re.search(r"(?:可省略|可选|无关).*(?:履历|背景|参考)", title):
+                continue
+            end = next((i for i, other_level, _ in headings[position + 1:] if other_level <= level), len(lines))
+            section = "".join(lines[start:end])
+            if (any(start <= i < end for i in semantic_lines)
+                    or re.search(r"绝不|不能|不得|必须|禁止|尚不知|只在", section)):
+                continue
+            keep[start:end] = [False] * (end - start)
+            omitted.append({"heading": title, "start_line": start + 1, "end_line": end,
+                            "reason": "explicit_optional_section"})
+    spans, start = [], None
+    for index, retained in enumerate(keep + [False]):
+        if retained and start is None:
+            start = index
+        elif not retained and start is not None:
+            spans.append({"start_line": start + 1, "end_line": index})
+            start = None
+    return {"content": "".join(line for line, retained in zip(lines, keep) if retained),
+            "source_spans": spans, "omitted_sections": omitted,
+            "selection": "semantic_sections" if semantic_lines else "full_unknown_format"}
+
+
+def _required_context(book_dir: Path, chapter: int, reader=None):
+    """Never compress away facts required to write safely. Ambiguity is reported."""
+    components, missing = {}, []
+    read = reader or read_file_safe
+
+    def add(name, path, content=None):
+        text = read(path) if content is None else content
+        if not text.strip():
+            missing.append(path.relative_to(book_dir).as_posix())
+            return
+        components[name] = {"source": path.relative_to(book_dir).as_posix(),
+                            "content": text, "chars": count_chars(text), "required": True}
+
+    outline = book_dir / "大纲" / f"章纲_第{chapter:03d}章.md"
+    if not outline.exists():
+        outline = book_dir / "大纲" / f"章纲_第{chapter}章.md"
+    add("chapter_brief", outline)
+    mentioned = extract_mentioned_characters(
+        components.get("chapter_brief", {}).get("content", ""), book_dir)
+    state_path = book_dir / "追踪/角色状态.md"
+    state = read(state_path)
+    missing.extend("追踪/角色状态.md#" + name for name in mentioned
+                   if not _has_character_state(state, name))
+    # Only omit confidently identified inactive-person sections. Shared sections,
+    # tables and unknown headings may contain required facts, so preserve them.
+    known_names = {path.stem for path in (book_dir / "设定/角色").glob("*.md")}
+    sections = re.split(r"(?=^#{1,2}[ \t]+)", state, flags=re.MULTILINE)
+    if mentioned:
+        kept = []
+        for section in sections:
+            heading = re.match(r"^##[ \t]+([^\n]+)", section)
+            identity = heading.group(1).strip(" *`\r") if heading else None
+            if identity not in known_names or identity in mentioned:
+                kept.append(section)
+        state = "".join(kept)
+    add("character_state", state_path, state)
+    add("foreshadowing", book_dir / "追踪/伏笔台账.md")
+    add("timeline", book_dir / "追踪/时间线.md")
+    if chapter > 1:
+        previous = [s for s in parse_chapter_summaries(book_dir, reader=reader) if s["chapter"] == chapter - 1]
+        if len(previous) == 1 and "\n".join(previous[0]["raw"].splitlines()[1:]).strip():
+            add("previous_chapter", book_dir / "追踪/章节摘要.md", previous[0]["raw"])
+        else:
+            candidates = [p for p in (book_dir / "正文").glob("*.md")
+                          if re.match(r"第0*{}章(?:[_\s.]|$)".format(chapter - 1), p.name)]
+            if len(candidates) == 1:
+                add("previous_chapter", candidates[0])
+            else:
+                missing.append("上一章正文或可靠摘要: 第{}章".format(chapter - 1))
+    cards, state_only = [], []
+    for name in mentioned:
+        relative = "设定/角色/" + name + ".md"
+        if any(c in name for c in "/\\"):
+            missing.append(relative)
+            continue
+        try:
+            card_path = _safe_source_path(book_dir, relative)
+        except (OSError, ValueError):
+            missing.append(relative)
+            continue
+        content = read(card_path)
+        if not content.strip():
+            # Only a proven missing file qualifies. Existing empty, unsafe or
+            # unreadable cards must not silently lose their hard constraints.
+            if (isinstance(read, _ContextReader)
+                    and read.omitted.get(relative, {}).get("reason") == "missing"
+                    and _has_character_state(state, name)):
+                state_only.append({"name": name, "missing_card": relative,
+                                   "source": "追踪/角色状态.md"})
+            else:
+                missing.append(relative)
+            continue
+        card = _select_character_card(content)
+        card.update(name=name, source=relative, chars=count_chars(card["content"]), required=True)
+        cards.append(card)
+    components["character_cards"] = {"count": len(cards), "chars": sum(card["chars"] for card in cards),
+                                     "characters": cards, "state_only": state_only, "required": True}
+    return components, missing
+
+
 def select_context(book_dir: Path, target_chapter: int, max_chars: int = DEFAULT_MAX_CHARS,
                    stage: Optional[str] = None) -> Dict[str, Any]:
     """为目标章节选取最小必读上下文。
@@ -470,9 +834,15 @@ def select_context(book_dir: Path, target_chapter: int, max_chars: int = DEFAULT
         上下文包字典。
     """
 
+    if target_chapter < 1 or max_chars < 1:
+        raise ValueError("chapter and max_chars must be positive")
+    book_dir = Path(book_dir).absolute()
+    reader = _ContextReader(book_dir)
+    required, missing = _required_context(book_dir, target_chapter, reader=reader)
+    required_chars = sum(c["chars"] for c in required.values())
     # v1.1: 自动判定阶段
     if stage is None:
-        stage = determine_stage(book_dir, target_chapter)
+        stage = determine_stage(book_dir, target_chapter, reader=reader)
 
     # v1.1: 按阶段获取动态预算比例
     budget_ratios_used = get_dynamic_budget_ratios(stage)
@@ -484,92 +854,58 @@ def select_context(book_dir: Path, target_chapter: int, max_chars: int = DEFAULT
         "max_chars": max_chars,
         "stage": stage,                        # v1.1 新增
         "budget_ratios_used": budget_ratios_used,  # v1.1 新增
-        "components": {},
+        "components": dict(required),
+        "ready": not missing and required_chars <= max_chars,
+        "missing_required": missing,
+        "required_chars": required_chars,
+        "errors": (["required_context_missing"] if missing else []) + (
+            ["required_context_over_budget"] if required_chars > max_chars else []),
         "total_chars": 0,
         "budget_used": 0,
     }
 
-    budget = {k: int(max_chars * v) for k, v in budget_ratios_used.items()}
-
-    # 1. 章纲
-    chapter_outline = book_dir / "大纲" / f"章纲_第{target_chapter:03d}章.md"
-    if not chapter_outline.exists():
-        # 尝试不带前导零
-        chapter_outline = book_dir / "大纲" / f"章纲_第{target_chapter}章.md"
-    if chapter_outline.exists() and "chapter_brief" in budget:
-        content = read_file_safe(chapter_outline)
-        content = truncate_text(content, budget["chapter_brief"])
-        context["components"]["chapter_brief"] = {
-            "source": str(chapter_outline.name),
-            "chars": count_chars(content),
-            "content": content,
-        }
-
-    # 2. 人物卡（从章纲中提取出场角色）
-    chapter_content = context["components"].get("chapter_brief", {}).get("content", "")
-    mentioned_chars = extract_mentioned_characters(chapter_content, book_dir)
-
-    char_cards = []
-    char_budget = budget.get("character_cards", 0)
-    char_chars = 0
-    for char_name in mentioned_chars:
-        if char_chars >= char_budget:
-            break
-        card_path = book_dir / "设定" / "角色" / f"{char_name}.md"
-        if card_path.exists():
-            card_content = read_file_safe(card_path)
-            # 只取人物卡的核心部分（前30行）
-            card_content = "\n".join(card_content.split("\n")[:30])
-            card_content = truncate_text(card_content, char_budget // max(len(mentioned_chars), 1))
-            char_cards.append({"name": char_name, "content": card_content, "chars": count_chars(card_content)})
-            char_chars += count_chars(card_content)
-    context["components"]["character_cards"] = {
-        "count": len(char_cards),
-        "chars": char_chars,
-        "characters": char_cards,
-    }
+    remaining = max(0, max_chars - required_chars) if context["ready"] else 0
+    optional_ratios = {k: v for k, v in budget_ratios_used.items() if k not in required}
+    ratio_sum = sum(optional_ratios.values()) or 1
+    budget = {k: int(remaining * v / ratio_sum) for k, v in optional_ratios.items()}
 
     # 3. 近章摘要
-    all_summaries = parse_chapter_summaries(book_dir)
+    summary_file = book_dir / "追踪/章节摘要.md"
+    all_summaries = (parse_chapter_summaries(book_dir, reader=reader)
+                     if reader.optional(summary_file, budget.get("recent_summaries", 0)) else [])
     recent = get_recent_summaries(all_summaries, target_chapter, DEFAULT_RECENT_CHAPTERS)
 
     recent_budget = budget.get("recent_summaries", 0)
     recent_chars = 0
     recent_content = []
+    included_chapters = []
     for ch in recent:
-        if recent_chars + ch["char_count"] > recent_budget:
-            # 压缩
-            compressed = truncate_text(ch["raw"], recent_budget - recent_chars)
-            recent_content.append(compressed)
-            recent_chars += count_chars(compressed)
+        separator_chars = 3 if recent_content else 0
+        available = recent_budget - recent_chars - separator_chars
+        if available <= 0:
             break
-        recent_content.append(ch["raw"])
-        recent_chars += ch["char_count"]
+        selected = truncate_text(ch["raw"], available)
+        if not selected.strip():
+            break
+        recent_content.append(selected)
+        included_chapters.append(ch["chapter"])
+        recent_chars += separator_chars + count_chars(selected)
+        if selected != ch["raw"]:
+            break
+
+    recent_text = "\n---\n".join(recent_content)
 
     context["components"]["recent_summaries"] = {
-        "count": len(recent),
-        "chars": recent_chars,
-        "chapters": [ch["chapter"] for ch in recent],
-        "content": "\n---\n".join(recent_content),
+        "count": len(included_chapters),
+        "chars": count_chars(recent_text),
+        "chapters": included_chapters,
+        "content": recent_text,
     }
-
-    # 4. 伏笔台账
-    foreshadow_file = book_dir / "追踪" / "伏笔台账.md"
-    if foreshadow_file.exists() and "foreshadowing" in budget:
-        foreshadow_content = read_file_safe(foreshadow_file)
-        # 只提取未回收和即将到期的伏笔
-        active_foreshadows = extract_active_foreshadows(foreshadow_content, target_chapter)
-        active_foreshadows = truncate_text(active_foreshadows, budget["foreshadowing"])
-        context["components"]["foreshadowing"] = {
-            "source": "伏笔台账.md",
-            "chars": count_chars(active_foreshadows),
-            "content": active_foreshadows,
-        }
 
     # 5. 节奏配额
     rhythm_file = book_dir / "追踪" / "节奏配额.md"
-    if rhythm_file.exists() and "rhythm_quota" in budget:
-        rhythm_content = read_file_safe(rhythm_file)
+    if reader.optional(rhythm_file, budget.get("rhythm_quota", 0)):
+        rhythm_content = reader(rhythm_file)
         # 只取最近几章的配额记录
         rhythm_lines = rhythm_content.split("\n")
         recent_rhythm = []
@@ -586,9 +922,9 @@ def select_context(book_dir: Path, target_chapter: int, max_chars: int = DEFAULT
 
     # 6. 大纲锚点（如果有 outline_anchors.json）
     anchor_file = book_dir / "大纲" / "outline_anchors.json"
-    if anchor_file.exists() and "outline_anchor" in budget:
+    if reader.optional(anchor_file, budget.get("outline_anchor", 0)):
         try:
-            anchor_data = json.loads(read_file_safe(anchor_file))
+            anchor_data = json.loads(reader(anchor_file))
             anchor_text = json.dumps(anchor_data, ensure_ascii=False, indent=2)
             anchor_text = truncate_text(anchor_text, budget["outline_anchor"])
             context["components"]["outline_anchor"] = {
@@ -601,8 +937,8 @@ def select_context(book_dir: Path, target_chapter: int, max_chars: int = DEFAULT
 
     # 7. 文风锚
     style_file = book_dir / "设定" / "文风锚.md"
-    if style_file.exists() and "style_anchor" in budget:
-        style_content = read_file_safe(style_file)
+    if reader.optional(style_file, budget.get("style_anchor", 0)):
+        style_content = reader(style_file)
         style_content = truncate_text(style_content, budget["style_anchor"])
         context["components"]["style_anchor"] = {
             "source": "文风锚.md",
@@ -612,9 +948,9 @@ def select_context(book_dir: Path, target_chapter: int, max_chars: int = DEFAULT
 
     # 8. 实体上下文（BM25检索结果，如果有）
     entity_index_file = book_dir / "追踪" / "entity_index.json"
-    if entity_index_file.exists() and "entity_context" in budget:
+    if reader.optional(entity_index_file, budget.get("entity_context", 0)):
         try:
-            entity_data = json.loads(read_file_safe(entity_index_file))
+            entity_data = json.loads(reader(entity_index_file))
             # 提取与目标章节相关的实体
             relevant = {}
             for entity, chapters in entity_data.items():
@@ -630,25 +966,10 @@ def select_context(book_dir: Path, target_chapter: int, max_chars: int = DEFAULT
         except (json.JSONDecodeError, TypeError):
             pass
 
-    # 8.5 角色状态（活跃角色当前状态，v7.0 新增）
-    char_state_file = book_dir / "追踪" / "角色状态.md"
-    if char_state_file.exists() and "character_state" in budget:
-        char_state_content = read_file_safe(char_state_file)
-        # 保留角色标题 + 含章号的变更行（成长轨迹/状态变更），压缩到预算
-        state_lines = [ln for ln in char_state_content.split("\n")
-                       if re.search(r"第\d+章|^#|成长轨迹|状态变更", ln)]
-        char_state_text = "\n".join(state_lines[-40:])
-        char_state_text = truncate_text(char_state_text, budget["character_state"])
-        context["components"]["character_state"] = {
-            "source": "角色状态.md",
-            "chars": count_chars(char_state_text),
-            "content": char_state_text,
-        }
-
     # 8.6 世界观关键设定（v7.0 新增）
     world_file = book_dir / "设定" / "世界观.md"
-    if world_file.exists() and "world_setting" in budget:
-        world_content = read_file_safe(world_file)
+    if reader.optional(world_file, budget.get("world_setting", 0)):
+        world_content = reader(world_file)
         world_content = truncate_text(world_content, budget["world_setting"])
         context["components"]["world_setting"] = {
             "source": "世界观.md",
@@ -659,7 +980,8 @@ def select_context(book_dir: Path, target_chapter: int, max_chars: int = DEFAULT
     # 9. 里程碑（v1.1 新增：finale 阶段加载终局储备）
     if stage == "finale" and "milestone" in budget:
         milestone_budget = budget["milestone"]
-        milestone_text = extract_milestone_content(book_dir)
+        milestone_text = (extract_milestone_content(book_dir, reader=reader)
+                          if reader.optional(book_dir / "大纲/总纲.md", milestone_budget) else "")
         if milestone_text:
             milestone_text = truncate_text(milestone_text, milestone_budget)
             context["components"]["milestone"] = {
@@ -672,6 +994,16 @@ def select_context(book_dir: Path, target_chapter: int, max_chars: int = DEFAULT
     total = sum(comp.get("chars", 0) for comp in context["components"].values())
     context["total_chars"] = total
     context["budget_used"] = round(total / max_chars * 100, 1) if max_chars > 0 else 0
+
+    for component in required.values():
+        paths = [component["source"]] if "source" in component else [
+            card["source"] for card in component.get("characters", [])]
+        for path in paths:
+            if path in reader.sources:
+                reader.sources[path]["required"] = True
+    context["source_manifest"] = list(reader.sources.values())
+    context["omitted_sources"] = list(reader.omitted.values())
+    context["package_sha256"] = _package_sha256(context)
 
     return context
 
@@ -691,18 +1023,31 @@ def extract_mentioned_characters(chapter_content: str, book_dir: Path) -> List[s
         if name in chapter_content:
             mentioned.append(name)
 
-    # 方法3：如果没有已知角色，尝试从章纲中提取人名（简单启发式）
-    if not mentioned:
-        # 查找"角色："或"人物："后面的内容
-        for line in chapter_content.split("\n"):
-            if "角色" in line or "人物" in line or "出场" in line:
-                # 提取冒号后的内容
-                parts = line.split("：") if "：" in line else line.split(":")
-                if len(parts) > 1:
-                    names = [n.strip().strip("，,、 ") for n in parts[1].split("，")]
-                    mentioned.extend([n for n in names if n and len(n) <= 5])
+    # Explicit cast may contain new characters without cards. Never hide them
+    # merely because one already registered character was found in the outline.
+    cast_level = None
+    for line in chapter_content.splitlines():
+        heading = re.match(r"^(#{1,6})[ \t]+(.+)$", line)
+        if heading:
+            level = len(heading.group(1))
+            if cast_level is not None and level <= cast_level:
+                cast_level = None
+            if heading.group(2).strip(" *`\r") in {"出场人物", "出场角色"}:
+                cast_level = level
+            continue
+        labels = "出场人物|出场角色|人物|角色|出场"
+        if cast_level is not None:
+            labels += "|主要|次要"  # The shipped outline-chapter.md format.
+        match = re.match(r"^\s*(?:[-*]\s*)?(?:\*\*)?(?:" + labels + r")"
+                         r"(?:\*\*)?\s*[：:]\s*(.+)$", line)
+        if match:
+            names = re.split(r"[，,、;；]", match.group(1))
+            names = [name.strip(" \t\r\n*`。.!！?？") for name in names]
+            no_cast = {"无", "无人", "无出场人物", "不新增出场人物", "不新增人物",
+                       "无新增人物", "无新增出场人物", "无其他人物", "无其他出场人物"}
+            mentioned.extend(name for name in names if name and name not in no_cast)
 
-    return mentioned[:5]  # 最多5个角色
+    return list(dict.fromkeys(mentioned))
 
 
 def extract_active_foreshadows(foreshadow_content: str, target_chapter: int) -> str:
@@ -736,6 +1081,10 @@ def generate_context_report(context: Dict[str, Any]) -> str:
     """生成人类可读的上下文报告"""
     lines = []
     lines.append("# 写作上下文包")
+    if not context.get("ready", True):
+        lines.append("BLOCKED: " + ", ".join(context.get("errors", [])))
+        lines.extend("- 缺少：" + path for path in context.get("missing_required", []))
+        lines.append("先补齐必需信息，或提高预算/由作者确认无损摘录；不得直接写章。")
     lines.append(f"\n生成引擎：context_manager.py v{VERSION}")
     lines.append(f"目标章节：第{context['target_chapter']}章")
     # v1.1: 显示当前阶段
@@ -745,6 +1094,13 @@ def generate_context_report(context: Dict[str, Any]) -> str:
         lines.append(f"当前阶段：{stage_label} ({stage})")
     lines.append(f"预算上限：{context['max_chars']} 字符")
     lines.append(f"实际使用：{context['total_chars']} 字符 ({context['budget_used']}%)")
+    if "source_manifest" in context:
+        lines.append("来源核验范围：清单中的实际读取文件及 state-only 缺卡前提；复用前运行 verify。哈希不证明语义正确。")
+        lines.append("上下文包 SHA-256：" + context.get("package_sha256", ""))
+        for source in context["source_manifest"]:
+            lines.append(f"- 来源指纹：{source['path']} ({source['bytes']} bytes, SHA-256 {source['sha256']})")
+        for source in context.get("omitted_sources", []):
+            lines.append(f"- 可选源未纳入或读取失败：{source['path']} ({source['reason']})")
 
     # v1.1: 使用实际使用的预算比例
     used_ratios = context.get("budget_ratios_used", BUDGET_RATIOS)
@@ -752,15 +1108,26 @@ def generate_context_report(context: Dict[str, Any]) -> str:
     for name, comp in context["components"].items():
         chars = comp.get("chars", 0)
         budget_pct = used_ratios.get(name, 0) * 100
-        lines.append(f"- **{name}**：{chars} 字 (预算 {budget_pct:.0f}%) — 来源: {comp.get('source', 'N/A')}")
+        allocation = "必需，完整保留" if comp.get("required") else f"可选参考权重 {budget_pct:.0f}%"
+        lines.append(f"- **{name}**：{chars} 字 ({allocation}) — 来源: {comp.get('source', 'N/A')}")
 
     lines.append(f"\n## 上下文内容")
     for name, comp in context["components"].items():
         lines.append(f"\n### [{name}]")
         content = comp.get("content", "")
         if name == "character_cards":
+            for legacy in comp.get("state_only", []):
+                lines.append(f"旧工程兼容：{legacy['name']} 无独立人物卡（{legacy['missing_card']}）；"
+                             f"仅使用已读取的 {legacy['source']}，未载明事实保持未知。"
+                             "新增人物卡后必须重新选取上下文。")
             for char in comp.get("characters", []):
                 lines.append(f"\n**{char['name']}**:")
+                if "source" in char:
+                    positions = ", ".join(f"{span['start_line']}-{span['end_line']}"
+                                          for span in char.get("source_spans", []))
+                    lines.append(f"来源：{char['source']}，行 {positions}；选取：{char.get('selection', '')}")
+                    for omitted in char.get("omitted_sections", []):
+                        lines.append(f"省略可选段：{omitted['heading']}（行 {omitted['start_line']}-{omitted['end_line']}）")
                 lines.append(char["content"])
         else:
             lines.append(content)
@@ -770,48 +1137,9 @@ def generate_context_report(context: Dict[str, Any]) -> str:
 
 def generate_brief_context(context: Dict[str, Any]) -> str:
     """生成精简版上下文（本节速记格式）"""
-    lines = []
-    lines.append(f"# 本节速记 — 第{context['target_chapter']}章")
-    lines.append(f"(上下文预算 {context['budget_used']}%)")
-
-    # v1.1: 标注当前阶段
-    stage = context.get("stage", "")
-    if stage:
-        stage_label = STAGE_LABELS.get(stage, stage)
-        lines[1] = f"(上下文预算 {context['budget_used']}%，阶段：{stage_label})"
-
-    # 章纲要点
-    brief = context["components"].get("chapter_brief", {}).get("content", "")
-    if brief:
-        lines.append("\n## 章纲要点")
-        lines.append(truncate_text(brief, 500))
-
-    # 出场角色
-    chars = context["components"].get("character_cards", {})
-    if chars.get("count", 0) > 0:
-        lines.append(f"\n## 出场角色 ({chars['count']}人)")
-        for char in chars.get("characters", []):
-            lines.append(f"- **{char['name']}**：{truncate_text(char['content'], 200)}")
-
-    # 近章回顾
-    recent = context["components"].get("recent_summaries", {})
-    if recent.get("count", 0) > 0:
-        lines.append(f"\n## 近章回顾 ({recent['count']}章)")
-        lines.append(truncate_text(recent.get("content", ""), 800))
-
-    # 活跃伏笔
-    foreshadow = context["components"].get("foreshadowing", {}).get("content", "")
-    if foreshadow:
-        lines.append("\n## 待处理伏笔")
-        lines.append(truncate_text(foreshadow, 400))
-
-    # 节奏约束
-    rhythm = context["components"].get("rhythm_quota", {}).get("content", "")
-    if rhythm:
-        lines.append("\n## 节奏约束")
-        lines.append(truncate_text(rhythm, 200))
-
-    return "\n".join(lines)
+    # Selection already applied the budget. A second truncation would drop hard
+    # constraints and current state from the very packet used by novel_flow.
+    return generate_context_report(context)
 
 
 # =========================================================
@@ -840,6 +1168,10 @@ def main():
     p_select.add_argument("--json", action="store_true", help="输出 JSON 格式")
     p_select.add_argument("--output", help="输出文件路径")
     p_select.add_argument("--stage", help="手动指定阶段（opening/development/deepwater/finale），默认自动判定")
+
+    p_verify = sub.add_parser("verify", help="只读核验已有 JSON 上下文包及其来源")
+    p_verify.add_argument("book_dir", help="书籍工程目录（不采用包内目录）")
+    p_verify.add_argument("--context", required=True, help="待核验的 JSON 上下文包")
 
     # compress 命令
     p_compress = sub.add_parser("compress", help="压缩多章摘要为回顾段")
@@ -883,6 +1215,18 @@ def main():
             print(f"上下文包已写入 {args.output}")
         else:
             print(output)
+        if not context["ready"]:
+            sys.exit(1)
+
+    elif args.command == "verify":
+        try:
+            packet = json.loads(Path(args.context).read_text(encoding="utf-8-sig"))
+            result = verify_context(Path(args.book_dir), packet)
+        except (OSError, ValueError, RecursionError):
+            result = {"ready": False, "status": "malformed", "changed": [], "missing": [],
+                      "errors": ["context_package_unreadable_or_invalid_json"]}
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        sys.exit(0 if result["ready"] else 1)
 
     elif args.command == "compress":
         book_dir = find_book_dir(args.book_dir)

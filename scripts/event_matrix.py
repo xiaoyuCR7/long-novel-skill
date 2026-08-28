@@ -38,6 +38,8 @@ import json
 import os
 import sys
 
+from config import EVENT_META, EVENT_ALIASES, normalize_event
+
 # Windows 中文控制台兼容
 for stream in (sys.stdout, sys.stderr):
     try:
@@ -45,38 +47,8 @@ for stream in (sys.stdout, sys.stderr):
     except (AttributeError, OSError):
         pass
 
-# 事件类型定义（单一来源 config.EVENT_META，失败回退内联常量）
-EVENT_TYPES = ["conflict", "bond", "faction", "world", "crisis", "revelation"]
-
-try:
-    from config import EVENT_META
-except ImportError:
-    EVENT_META = {
-        "conflict": {
-            "name": "冲突爽点", "cooldown": 2, "consecutive_limit": 2,
-            "quota": "A", "desc": "打脸/对决/爽点爆发",
-        },
-        "bond": {
-            "name": "人物羁绊", "cooldown": 3, "consecutive_limit": 3,
-            "quota": "B", "desc": "师徒/友情/情感深化",
-        },
-        "faction": {
-            "name": "势力经营", "cooldown": 4, "consecutive_limit": 2,
-            "quota": None, "desc": "宗门/势力/组织运作",
-        },
-        "world": {
-            "name": "风土人情", "cooldown": 3, "consecutive_limit": 2,
-            "quota": None, "desc": "世界观/风物/民俗",
-        },
-        "crisis": {
-            "name": "危机升级", "cooldown": 2, "consecutive_limit": 2,
-            "quota": None, "desc": "威胁逼近/压力升级",
-        },
-        "revelation": {
-            "name": "核心秘密", "cooldown": 5, "consecutive_limit": 1,
-            "quota": "C", "desc": "身世/真相/核心揭秘（C类升级）",
-        },
-    }
+# 事件类型/旧名/归一化均来自 config；不接受前缀猜测。
+EVENT_TYPES = list(EVENT_META)
 
 # gentle_window：每5章至少1次 bond 或 world
 GENTLE_WINDOW_SIZE = 5
@@ -86,54 +58,34 @@ GENTLE_WINDOW_TYPES = ("bond", "world")
 QUOTA_TO_EVENT = {"A": "conflict", "B": "bond", "C": "revelation"}
 EVENT_TO_QUOTA = {ev: meta["quota"] for ev, meta in EVENT_META.items() if meta["quota"]}
 
-# 事件类型别名（兼容 rhythm_guard.py 旧版）
-EVENT_ALIASES = {
-    "conflict_thrill": "conflict",
-    "bond_deepening": "bond",
-    "faction_building": "faction",
-    "world_painting": "world",
-    "tension_escalation": "crisis",
-    "revelation": "revelation",
-}
-
-
-def normalize_event(event):
-    """规范化事件类型，兼容别名。"""
-    if not event:
-        return None
-    event = event.strip()
-    if event in EVENT_TYPES:
-        return event
-    if event in EVENT_ALIASES:
-        return EVENT_ALIASES[event]
-    # 前缀匹配
-    for alias, canonical in EVENT_ALIASES.items():
-        if alias.startswith(event) or event.startswith(alias.split("_")[0]):
-            return canonical
-    return None
-
-
 def matrix_path(book_root):
     """事件矩阵数据文件路径。"""
     return os.path.join(book_root, "追踪", "event_matrix.json")
 
 
 def load_matrix(book_root):
-    """加载事件矩阵状态。返回状态字典。"""
+    """只读加载并规范化旧名；坏历史不能作为空历史继续记录。"""
     path = matrix_path(book_root)
-    if not os.path.isfile(path):
+    if not os.path.exists(path):
         return {
             "records": [],  # [(章号, 事件类型), ...]
             "last_updated": None,
         }
-    try:
-        with open(path, "r", encoding="utf-8-sig") as f:
-            data = json.load(f)
-        if "records" not in data:
-            data["records"] = []
-        return data
-    except (OSError, ValueError):
-        return {"records": [], "last_updated": None}
+    with open(path, "r", encoding="utf-8-sig") as f:
+        data = json.load(f)
+    if not isinstance(data, dict) or not isinstance(data.get("records", []), list):
+        raise ValueError("invalid_event_matrix_records")
+    records = []
+    for entry in data.get("records", []):
+        if (not isinstance(entry, (list, tuple)) or len(entry) != 2
+                or type(entry[0]) is not int or entry[0] < 1):
+            raise ValueError("invalid_event_matrix_record")
+        event = normalize_event(entry[1])
+        if not event:
+            raise ValueError(f"第{entry[0]}章历史事件类型无法识别：{entry[1]}")
+        records.append((entry[0], event))
+    data["records"] = records
+    return data
 
 
 def save_matrix(book_root, data):
@@ -421,20 +373,24 @@ def main():
 
     book_root = os.path.abspath(args.book_root)
 
-    if args.command == "recommend":
-        if not args.gear:
-            print("错误：recommend 需要 --gear 参数（快/中/慢）", file=sys.stderr)
-            return 2
-        return cmd_recommend(book_root, args)
+    try:
+        if args.command == "recommend":
+            if not args.gear:
+                print("错误：recommend 需要 --gear 参数（快/中/慢）", file=sys.stderr)
+                return 2
+            return cmd_recommend(book_root, args)
 
-    if args.command == "record":
-        if not args.event:
-            print("错误：record 需要 --event 参数", file=sys.stderr)
-            return 2
-        return cmd_record(book_root, args)
+        if args.command == "record":
+            if not args.event:
+                print("错误：record 需要 --event 参数", file=sys.stderr)
+                return 2
+            return cmd_record(book_root, args)
 
-    if args.command == "status":
-        return cmd_status(book_root, args)
+        if args.command == "status":
+            return cmd_status(book_root, args)
+    except (OSError, ValueError) as exc:
+        print(f"错误：事件矩阵无法读取或记录：{exc}", file=sys.stderr)
+        return 2
 
     return 0
 

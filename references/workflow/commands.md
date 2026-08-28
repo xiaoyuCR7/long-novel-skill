@@ -255,7 +255,7 @@ Agent 会提示「可以切换到高级模式了」。作者也可以随时说�
 | 属性 | 内容 |
 |---|---|
 | 触发方式 | 「实体索引」「XX在第几章出现」「更新实体索引」「build entity」 |
-| 功能说明 | 读取或重建 `entity_index.json`，展示指定实体（人物/地点/物品/功法）在哪些章节出现过。从章节摘要的「关键实体」字段聚合生成。 |
+| 功能说明 | 读取或重建 `追踪/entity_index.json`，展示指定实体（人物/地点/物品/功法）在哪些章节出现过。从章节摘要的「关键实体」字段聚合生成。 |
 | 关联文件 | `scripts/entity_index.py`、`追踪/entity_index.json` |
 | 典型示例 | 「实体索引」「碧落剑在哪几章出现过」「更新实体索引」 |
 
@@ -305,7 +305,7 @@ Agent 会提示「可以切换到高级模式了」。作者也可以随时说�
 |---|---|
 | 触发方式 | 「风格库」「导入风格」「搜索风格」「应用风格」「跨书风格」 |
 | 功能说明 | 跨书风格库管理：从已有书籍导入风格指纹 → 存入风格库 → 按题材/标签搜索 → 应用到新书。适用于多书写作/系列写作/风格迁移场景。 |
-| 关联文件 | `scripts/style_library.py`、`workflow/style-library.md`、`assets/style_library/index.json` |
+| 关联文件 | `scripts/style_library.py`、`workflow/style-library.md`、`{skill_root}/assets/style_library/index.json` |
 | 典型示例 | 「风格库：导入我的修仙书的风格」「搜索风格库：冷峻玄幻」「把冷酷修仙风应用到新书」 |
 
 ---

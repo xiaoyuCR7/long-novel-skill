@@ -7,6 +7,12 @@ on:
       - 'scripts/**'
       - 'novel-cli.py'
       - 'mcp_server/**'
+      - 'SKILL.md'
+      - 'skill.json'
+      - 'README.md'
+      - 'CHANGELOG.md'
+      - 'references/**'
+      - 'assets/**'
       - '.github/workflows/**'
   pull_request:
     branches: [main, master]
@@ -14,6 +20,12 @@ on:
       - 'scripts/**'
       - 'novel-cli.py'
       - 'mcp_server/**'
+      - 'SKILL.md'
+      - 'skill.json'
+      - 'README.md'
+      - 'CHANGELOG.md'
+      - 'references/**'
+      - 'assets/**'
       - '.github/workflows/**'
 
 permissions:
@@ -71,6 +83,16 @@ jobs:
         run: |
           cd "$GITHUB_WORKSPACE"
           python scripts/tests/run_tests.py
+
+      - name: Skill contract audit
+        env:
+          PYTHONUTF8: "1"
+        run: python scripts/skill_contract.py .
+
+      - name: Version synchronization
+        env:
+          PYTHONUTF8: "1"
+        run: python scripts/version_sync.py --check
 
       - name: 上传测试结果（失败时）
         if: failure()
@@ -133,14 +155,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: 检查 SKILL.md 基本字段
-        run: |
-          echo "=== SKILL.md 元数据检查 ==="
-          grep -q '^name:' SKILL.md && echo "✓ name 字段存在"
-          grep -q '^description:' SKILL.md && echo "✓ description 字段存在"
-          grep -q '^version:' SKILL.md && echo "✓ version 字段存在"
-          grep -q '^license:' SKILL.md && echo "✓ license 字段存在"
-          grep -q 'Iron Law' SKILL.md && echo "✓ Iron Law 存在"
+      - name: 检查 SKILL.md 契约
+        env:
+          PYTHONUTF8: "1"
+        run: python scripts/skill_contract.py .
 
       - name: 检查参考文档索引完整性
         run: |

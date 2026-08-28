@@ -15,7 +15,7 @@ import os
 # Skill 版本
 # =============================================================================
 
-SKILL_VERSION = "7.0.0"
+SKILL_VERSION = "8.0.0"
 SKILL_NAME = "long-novel-skill"
 
 
@@ -121,6 +121,21 @@ EVENT_META = {
     "revelation": {"name": "核心秘密", "cooldown": 5, "consecutive_limit": 1, "quota": "C",
                    "desc": "身世/真相/核心揭秘"},
 }
+
+# 精确兼容旧名；禁止用前缀猜测或把未知事件默认为无事件。
+EVENT_ALIASES = {
+    "conflict_thrill": "conflict", "bond_deepening": "bond",
+    "faction_building": "faction", "world_painting": "world",
+    "tension_escalation": "crisis", "revelation": "revelation",
+}
+
+
+def normalize_event(event):
+    """返回六类规范名；空值和未知名返回 None，由调用方区分缺省/错误。"""
+    if not isinstance(event, str):
+        return None
+    event = event.strip()
+    return event if event in EVENT_META else EVENT_ALIASES.get(event)
 
 # =============================================================================
 # 上下文管理（v6.1：动态上下文阶段配置）

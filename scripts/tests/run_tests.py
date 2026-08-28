@@ -10,11 +10,11 @@
 输出格式：
     === long-novel-skill 测试套件 ===
 
-    test_common.py ............... 15/15 通过
-    test_check_text.py ........... 8/8 通过
+    test_common.py ............... 15/15 通过，跳过 0，失败 0
+    test_check_text.py ........... 7/8 通过，跳过 1，失败 0
     ...
 
-    总计：38/38 通过，耗时 2.3s
+    总计：37/38 通过，跳过 1，失败 0，耗时 2.3s
 """
 
 import io
@@ -31,6 +31,9 @@ TEST_MODULES = [
     "test_config",
     "test_novel_flow",
     "test_context_manager",
+    "test_source_materialize",
+    "test_resume",
+    "test_run_tests",
     "test_static_check",
     "test_benchmark",
     "test_rhythm_guard",
@@ -48,6 +51,13 @@ TEST_MODULES = [
     "test_story_graph",
     "test_style_fingerprint",
     "test_timeline_manager",
+    "test_skill_contract",
+    "test_dashboard",
+    "test_release_contract",
+    "test_chapter_transaction",
+    "test_gate_artifacts_contract",
+    "test_style_exemptions",
+    "test_workflow_closure",
 ]
 
 # 测试目录与 scripts 目录
@@ -60,16 +70,27 @@ for p in (str(SCRIPTS_DIR), str(TESTS_DIR)):
         sys.path.insert(0, p)
 
 
-def _format_line(name, passed, total, width=40):
-    """生成形如 'test_common.py ............... 15/15 通过' 的行。"""
+def _format_line(name, passed, total, width=40, skipped=0, failed=0):
+    """分别列出通过、跳过、失败，分母为测试方法数（不含子测试数）。"""
     dots_count = max(1, width - len(name) - len(f" {passed}/{total} 通过") - 2)
     dots = "." * dots_count
-    status = "通过" if passed == total else "部分通过"
-    return f"{name} {dots} {passed}/{total} {status}"
+    return f"{name} {dots} {passed}/{total} 通过，跳过 {skipped}，失败 {failed}"
+
+
+def _result_counts(result):
+    """Count methods once; fixture outcomes are reported but never deducted."""
+    def parent_test(case):
+        parent = getattr(case, "test_case", None)
+        return parent if isinstance(parent, unittest.TestCase) else case
+    failed = {parent_test(case) for case, _ in result.failures + result.errors}
+    failed.update(result.unexpectedSuccesses)
+    skipped = {parent_test(case) for case, _ in result.skipped} - failed
+    unsuccessful_methods = {case for case in failed | skipped if isinstance(case, unittest.TestCase)}
+    return result.testsRun - len(unsuccessful_methods), len(skipped), len(failed)
 
 
 def run_module(module_name):
-    """运行单个测试模块，返回 (passed, total, elapsed, output_text)。
+    """运行单个测试模块，返回 (passed, total, elapsed, result)。
 
     测试执行期间重定向 stdout/stderr，避免被测代码的错误输出污染报告。
     若该模块有失败用例，则把捕获的输出拼到返回的 result 中便于排查。
@@ -78,7 +99,8 @@ def run_module(module_name):
     try:
         suite = loader.loadTestsFromName(module_name)
     except (ImportError, AttributeError) as e:
-        return 0, 0, 0.0, _make_failed_result(str(e))
+        result = _make_failed_result(e)
+        return 0, result.testsRun, 0.0, result
 
     captured = io.StringIO()
     runner = unittest.TextTestRunner(stream=captured, verbosity=0)
@@ -95,16 +117,18 @@ def run_module(module_name):
     # 把捕获的输出挂到 result 上，供失败时打印
     result._captured_output = captured.getvalue()
     total = result.testsRun
-    failed = len(result.failures) + len(result.errors)
-    passed = total - failed
+    passed, _, _ = _result_counts(result)
     return passed, total, elapsed, result
 
 
-def _make_failed_result(msg):
-    """构造一个失败的空 result，用于导入失败场景。"""
+def _make_failed_result(error):
+    """Preserve a real loader exception as an unsuccessful unittest result."""
     result = unittest.TestResult()
-    result.testsRun = 0
-    result._captured_output = msg
+    case = unittest.FunctionTestCase(lambda: None, description="test module import")
+    result.startTest(case)
+    result.addError(case, (type(error), error, error.__traceback__))
+    result.stopTest(case)
+    result._captured_output = str(error)
     return result
 
 
@@ -130,17 +154,23 @@ def main(argv):
         modules = list(TEST_MODULES)
 
     print("=== long-novel-skill 测试套件 ===")
+    print("计数：分母为运行的方法数；跳过/失败含fixture结果，fixture级结果不计入方法分母。")
     print()
 
     total_passed = 0
     total_tests = 0
+    total_skipped = 0
+    total_failed = 0
     total_start = time.time()
 
     for mod in modules:
         passed, total, elapsed, result = run_module(mod)
         total_passed += passed
         total_tests += total
-        print(_format_line(f"{mod}.py", passed, total))
+        _, skipped, failed = _result_counts(result)
+        total_skipped += skipped
+        total_failed += failed
+        print(_format_line(f"{mod}.py", passed, total, skipped=skipped, failed=failed))
         # 有失败时打印详情
         if hasattr(result, "failures") and (result.failures or result.errors):
             for case, tb in result.failures + result.errors:
@@ -155,9 +185,8 @@ def main(argv):
 
     total_elapsed = time.time() - total_start
     print()
-    status = "通过" if total_passed == total_tests else "部分通过"
-    print(f"总计：{total_passed}/{total_tests} {status}，耗时 {total_elapsed:.1f}s")
-    return 0 if total_passed == total_tests else 1
+    print(f"总计：{total_passed}/{total_tests} 通过，跳过 {total_skipped}，失败 {total_failed}，耗时 {total_elapsed:.1f}s")
+    return 0 if total_failed == 0 else 1
 
 
 if __name__ == "__main__":

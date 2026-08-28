@@ -134,12 +134,12 @@ run 阶段每章的安全约束（不可跳过）：
 ### 各状态职责
 
 - **IDLE**：无任务。检测到 `追踪/auto_write_state.json` 存在且状态非 IDLE → 进入断点续写询问（见下节）。
-- **PLANNING**：读 `state.json` 与 `cache.json`，跑 `resume.py` 确认无欠账，校验目标章号范围内的章纲是否就位（缺纲的章先补纲再进 WRITING）。输出 `追踪/auto_write_plan.json` 作为计划快照（断点续写时若 plan.json 已存在则跳过此步）。
+- **PLANNING**：读 `追踪/auto_write_state.json` 与 `追踪/auto_write_cache.json`，跑 `resume.py` 确认无欠账，校验目标章号范围内的章纲是否就位（缺纲的章先补纲再进 WRITING）。输出 `追踪/auto_write_plan.json` 作为计划快照（断点续写时若 plan.json 已存在则跳过此步）。
 - **WRITING**：完整走 `chapter-loop.md` 的 Step 0–8，不做任何跳步。本章正文落盘、追踪五文件更新、`validate_tracking` + `entity_index build` 全部完成后才进 GATE。
 - **GATE**：机器闸口判定。`check_text.py` + `rhythm_guard.py` + `style_fingerprint.py compare`（每 5–10 章）全绿 → TRACKING；有 FAIL → 在返工上限内返工本章，超限 → 熔断停止。
-- **TRACKING**：更新 `state.json`（当前章号、已写章数、门禁通过率、上次断点时间）与 `cache.json`（本章处理摘要）。更新完进 REPORTING 或直接回 WRITING。
+- **TRACKING**：更新 `追踪/auto_write_state.json`（当前章号、已写章数、门禁通过率、上次断点时间）与 `追踪/auto_write_cache.json`（本章处理摘要）。更新完进 REPORTING 或直接回 WRITING。
 - **REPORTING**：每写完 5 章输出一次进度报告（见报告模板）。终止条件满足时输出终局报告。
-- **IDLE（终止）**：终局报告输出后，`state.json` 标记 IDLE，释放执行锁。
+- **IDLE（终止）**：终局报告输出后，`追踪/auto_write_state.json` 标记 IDLE，释放执行锁。
 
 ## 状态持久化
 
@@ -225,11 +225,11 @@ started: 2026-07-27T10:00:00
 - 启动 PLANNING 前检查锁文件是否存在。存在 → 询问用户「另一实例可能正在运行，强制接管还是退出？」
 - 用户选「强制接管」→ 覆盖锁文件，继续。选「退出」→ 停止。
 - 终局报告输出后或熔断停止后，删除锁文件。
-- 异常崩溃导致锁未清理：下次启动检测到锁 + 对应 `state.json` 状态非 IDLE → 走断点续写询问。
+- 异常崩溃导致锁未清理：下次启动检测到锁 + 对应 `追踪/auto_write_state.json` 状态非 IDLE → 走断点续写询问。
 
 ## 断点续写
 
-会话中断后重新进入时，调度器先检查 `state.json`：
+会话中断后重新进入时，调度器先检查 `追踪/auto_write_state.json`：
 
 1. **文件不存在**：全新任务，正常启动。
 2. **文件存在且 `status == IDLE`**：上一轮已正常结束，清理后启动新任务。
@@ -249,7 +249,7 @@ started: 2026-07-27T10:00:00
    [4] 放弃托管，手动接手
    ```
 
-用户选择后，更新 `state.json` 对应字段，进入 PLANNING。
+用户选择后，更新 `追踪/auto_write_state.json` 对应字段，进入 PLANNING。
 
 ## 每章流程
 
@@ -264,9 +264,9 @@ started: 2026-07-27T10:00:00
    - P0 级（禁用词/毒句式/正文污染/字数严重偏差）→ 返工，计入 `p0_rewrite_rounds`。
    - P1/P2 级（节奏配额越界/文风漂移）→ 尝试局部修，修不好则标记「有条件通过」继续。
    - 单章返工达 2 次（MAX_P0_REWRITE_ROUNDS=2）仍有 P0 → 标记「门禁未通过」，
-     `consecutive_gate_fail += 1`，写回 `state.json`，继续下一章（不无限卡在一章）。
+     `consecutive_gate_fail += 1`，写回 `追踪/auto_write_state.json`，继续下一章（不无限卡在一章）。
 5. **Step 7 更新追踪**：正常更新，跑 `validate_tracking` + `entity_index build`。
-6. **Step 8 报告**：托管模式不逐章向用户报告，而是写入 `cache.json`。每 5 章输出一次进度报告。
+6. **Step 8 报告**：托管模式不逐章向用户报告，而是写入 `追踪/auto_write_cache.json`。每 5 章输出一次进度报告。
 
 ## 进度报告
 
@@ -327,7 +327,7 @@ started: 2026-07-27T10:00:00
 
 ## 熔断后的恢复
 
-熔断后 `state.json` 标记为 `GATE_FAIL_BURNT`（非 IDLE），等待人工处理：
+熔断后 `追踪/auto_write_state.json` 标记为 `GATE_FAIL_BURNT`（非 IDLE），等待人工处理：
 
 1. 作者排查根因，修正纲/设定/禁用词表。
 2. 修正后重新启动托管，检测到 `GATE_FAIL_BURNT` 状态：
@@ -342,7 +342,7 @@ started: 2026-07-27T10:00:00
 
 ## 幂等性保障
 
-`cache.json` 记录每章的处理摘要。断点续写或重试时：
+`追踪/auto_write_cache.json` 记录每章的处理摘要。断点续写或重试时：
 
 - cache 中某章 `status == "done"` 且 `gate_pass == true` → 跳过，直接进入下一章。
 - cache 中某章 `status == "done"` 但 `gate_pass == false`（有条件通过）→ 不重写，
@@ -381,13 +381,13 @@ started: 2026-07-27T10:00:00
 ## 实现方式
 
 本文档是协议规范，不是外部调度脚本。自建 skill 不依赖外部调度器进程，而是靠文件状态机
-驱动：模型按本协议操作，通过读写 `auto_write_plan.json` / `auto_write_state.json` /
-`auto_write_cache.json` 三个文件实现状态管理和断点续写。
+驱动：模型按本协议操作，通过读写 `追踪/auto_write_plan.json` / `追踪/auto_write_state.json` /
+`追踪/auto_write_cache.json` 三个文件实现状态管理和断点续写。
 
 - **plan/run/report 三阶段**由模型按本协议的步骤执行，不依赖外部编排引擎。
-- **断点续写**靠读 `state.json` 恢复，不依赖外部检查点机制。
+- **断点续写**靠读 `追踪/auto_write_state.json` 恢复，不依赖外部检查点机制。
 - **自动暂停**靠模型在每章完成后检查终止条件，不依赖外部监控进程。
-- **幂等缓存**靠读 `cache.json` 跳过已完成章，不依赖外部去重逻辑。
+- **幂等缓存**靠读 `追踪/auto_write_cache.json` 跳过已完成章，不依赖外部去重逻辑。
 
 模型执行本协议时，每个状态转换都要更新对应的 JSON 文件，确保会话中断后能从文件恢复。
 

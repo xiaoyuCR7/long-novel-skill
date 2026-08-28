@@ -1,15 +1,35 @@
 # long-novel-skill
 
-通用网文创作 agent skill（长篇 + 短篇），**v7.0.0**。核心只装通用写作工艺（工作流 + 模板 + 禁区清单），
+通用网文创作 agent skill（长篇 + 短篇），**v8.0.0**。核心只装通用写作工艺（工作流 + 模板 + 禁区清单），
 题材规则（34 题材 + 九件事正文层规范）与平台规则（长篇番茄/起点/晋江/飞卢 + 短篇知乎盐言/番茄短篇/七猫短篇）
 做成可插拔的参考文件，按需加载。
+
+## 能力证据边界
+
+### 已实现并自动验证
+
+- 轻量意图路由、章意图契约、场景渲染、大纲不足时的 `outline_underfilled` 停止协议，以及正文与追踪的事务边界。
+- 本地 Dashboard 的路径隔离、revision 冲突保护、原子保存、备份和可恢复删除。
+- 44 个顶层 Python 脚本、112 份 reference（47 份 craft、27 份 workflow）、24 个 MCP tool；测试收集数由 `skill.json` 与发布契约核对。平台不支持的符号链接测试可能跳过，运行器分别报告通过、失败与跳过。
+- skill 契约、公开版本一致性、工作流闭环和关键文件事务均有确定性校验。
+
+### 有条件能力与降级
+
+- 联网调研与动态平台规则依赖当次可用网络；不可用时必须标记未核验并采用本地资料回退。
+- RAG、自定义 Agent 和 MCP 属于可选增强，缺失时保留本地章纲、追踪和机器门禁主链。
+- 只有用户明确要求且图片工具可用时才实际生成封面；否则只交付结构化 prompt、尺寸与排版安全区，明确未生成图片。
+
+### 建议性或人工判断
+
+- 文学感染力、平台适配与最终封面文字仍需作者或编辑验收；脚本分数不替代审美与发布审核。
+- 自动化校验只证明明确写入契约的行为，不替代真实创作样本的匿名评审与长期连载检验。
 
 v6.1 在 v6.0 基础上新增跨平台支持体系：MCP Server 封装（24 个 Tools 支持任何 MCP 客户端）、
 跨平台安装脚本（install.sh/install.ps1 支持 Claude Code/TRAE/Cursor/Codex/OpenCode/Gemini CLI/Antigravity）、
 skill.json 跨平台技能定义文件、TRAE Agent 部署路径适配。一次封装，全平台通用。
 
 v6.0 在 v5.0 基础上新增 Beat Sheet 生成器、章节合成器、门禁修复计划、编辑团队状态管理器、自动化 Hook 机制、
-RAG 检索增强六大核心脚本，并补齐共享工具模块（common.py + config.py）与核心脚本测试套件（744 个单元测试，默认全量验证），
+RAG 检索增强六大核心脚本，并补齐共享工具模块（common.py + config.py）与核心脚本测试套件（该历史版本为744个单元测试），
 新增拆文产出结构化分目录规范工艺文件，题材卡扩展至 34 张，新增：
 Beat Sheet 生成器（分镜表自动拆分+五维扩写+合成校验）、
 章节合成器（Beat 拼接+过渡检测+质量校验+润色提示）、
@@ -21,7 +41,7 @@ RAG 检索增强（BM25 两级+增量索引+查询缓存+轻场景跳过+命中�
 核心脚本测试套件（744 个单元测试覆盖 20 个脚本模块）。
 
 v5.0 在 v4.1 基础上新增智能内容扩充引擎、长篇上下文管理器、统一流程执行器、质量评分系统四大量化工具体系，
-补齐身体细节替代情绪词、特殊题材处理、题材公式、全流程质量检查清单四类工艺文档，全面超越两个开源 skill，新增：
+补齐身体细节替代情绪词、特殊题材处理、题材公式、全流程质量检查清单四类工艺文档，并针对两个开源 skill 的能力面补缺，新增：
 语义级节奏审查（四维度：档位判断+配额语义核查+悬念质量+隐性加速检测）、
 知识图谱（节点+边+版本+级联标记+Mermaid导出+影响分析）、
 联网调研（题材维度映射+缺口检测+关键词生成+结构化存储）、
@@ -69,7 +89,7 @@ bash install.sh --tool all
 
 ### MCP Server 模式（推荐）
 
-任何支持 MCP 的客户端都可以通过 MCP Server 调用全部 26 个工具：
+任何支持 MCP 的客户端都可以通过 MCP Server 调用全部 24 个工具：
 
 ```bash
 cd mcp_server
@@ -111,7 +131,7 @@ cp assets/agents/*.md {书籍工程根}/.trae/agents/
 long-novel-skill/
 ├── SKILL.md                  # 核心入口：触发条件、工作流总览、Iron Law、题材/平台加载协议
 ├── references/
-│   ├── workflow/             # 工作流（v6.0 共 24 个）
+│   ├── workflow/             # 工作流（当前 27 个）
 │   │   ├── book-init.md          # 开书流程（长篇，对接 init_book.py）
 │   │   ├── chapter-loop.md       # 单章写作循环
 │   │   ├── outline-system.md     # 三级大纲 + 大纲锚点配额
@@ -136,7 +156,7 @@ long-novel-skill/
 │   │   ├── commands.md           # 命令入口表（30个命令+新手/高级分层）（v4.0 新增）
 │   │   ├── revision.md           # 大修流程
 │   │   └── book-scaling.md       # 百万字结构展开
-│   ├── craft/                # 通用写作工艺（v5.0 共 40 个；v6.3 增 short-story-ending.md → 44 个；v6.6 增 sensitive-word-replacement.md → 45 个）
+│   ├── craft/                # 通用写作工艺（当前 47 个）
 │   │   ├── iron-law.md           # 七条铁律
 │   │   ├── anti-ai-style.md      # 7 Gate 去AI腔（判定标准）
 │   │   ├── deslop-engineering.md  # 去AI味工程化（量化分级+删除优先+比例上限+白名单+收敛终止）
@@ -178,7 +198,7 @@ long-novel-skill/
 │   ├── agents/               # 编辑团队可部署资产（4 个角色 + README）
 │   └── style_library/        # 风格库（跨书复用）（v4.0 新增）
 │       └── index.json         # 风格库索引
-└── scripts/                  # 机械闸口与量化工具（纯标准库，无第三方依赖，共 41 个）
+└── scripts/                  # 机械闸口、量化与验证工具（纯标准库，共 44 个）
     ├── common.py                 # 共享工具函数（文件I/O+文本处理+章节解析）（v6.0 新增）
     ├── config.py                 # 全局配置常量（目录结构+文件名+BM25参数）（v6.0 新增）
     ├── check_text.py             # 7 Gate + 字数 + 禁用词 + 毒句式 + 伏笔超期 + 量化打分 + 7类AI模式检测 + --deslop分级 + --whitelist
@@ -205,7 +225,7 @@ long-novel-skill/
     ├── editorial_manager.py      # 编辑团队状态管理器（snapshot/record-review/status/need-human）（v6.0 新增）
     ├── hooks.py                  # 自动化Hook机制（5个Hook）（v6.0 新增）
     ├── rag_retriever.py          # RAG检索增强（build/query/status）（v6.0 新增）
-    └── tests/                    # 单元测试套件（744 测试覆盖 20 个模块，v7.0 起默认全量运行）（v6.0 新增，v6.2/v6.3 扩展）
+    └── tests/                    # 默认全量测试套件（收集数见 skill.json）
         ├── run_tests.py              # 测试运行器
         ├── test_common.py            # common.py（36）
         ├── test_config.py            # config.py（14）
@@ -279,7 +299,7 @@ long-novel-skill/
 | **自动化 Hook 机制**（v6.0 新增） | 5 个 Hook：session-start/guard-outline/check-prose/detect-gaps/pre-compact | `scripts/hooks.py` |
 | **RAG 检索增强**（v6.0 新增） | BM25 两级+增量索引+查询缓存+轻场景跳过+命中可解释+写前上下文建议 | `scripts/rag_retriever.py` |
 | **共享模块**（v6.0 新增） | common.py 工具函数（I/O+文本+章节）+config.py 配置常量（目录+文件名+参数） | `scripts/common.py`、`scripts/config.py` |
-| **核心脚本测试套件**（v6.0 新增，v6.2/v6.3 扩展） | 744 个单元测试覆盖 20 个脚本模块（默认全量运行） | `scripts/tests/run_tests.py` |
+| **核心脚本测试套件** | 默认全量运行已登记模块；收集数由发布契约核验 | `scripts/tests/run_tests.py` |
 | 题材包可插拔（34题材 + 九件事） | 12栏目设定层 + 九件事正文层 | `genres/INDEX.md`、`genres/GENRE-PROSE-SPEC.md` |
 | 平台适配（长篇+短篇） | 长篇番茄/起点/晋江/飞卢 + 短篇知乎盐言/番茄短篇/七猫短篇 | `platforms/platform-guide.md` |
 | 一键开书骨架 | 一条命令建书籍工程目录 + 拷贝模板 | `scripts/init_book.py` |
@@ -329,9 +349,28 @@ cp -R long-novel-skill ~/.agents/skills/
 
 ## 脚本说明
 
-二十六个脚本均为纯标准库实现，无第三方依赖，Windows 兼容。退出码统一：0 通过 / 1 有命中或违规 / 2 参数错误。
+44 个顶层脚本均为纯标准库实现并纳入 Python 3.8+ 语法检查；各 CLI 的退出码以其 `--help` 为准。
 脚本通过文件名约定与 `追踪/门禁/gate_chN.json`、`追踪/entity_index.json` 等约定路径互相协作，
 不依赖任何 agent，是质量底线。
+
+R4 新增原稿保真与上下文复用核验：
+
+```bash
+python scripts/source_materialize.py "{原稿文件}" "{新目标文件}"
+python scripts/source_materialize.py --text-json "{单JSON字符串文件}" "{新目标文件}"
+python scripts/resume.py "{book}" --json
+python scripts/context_manager.py select "{book}" --chapter {N} --json --output "{工程外上下文包.json}"
+python scripts/context_manager.py verify "{book}" --context "{工程外上下文包.json}"
+```
+
+复制不改换行、BOM或末尾字符；不同目标内容拒绝覆盖，排他发布需要文件系统支持hard-link。
+会话字符串物化仅证明其UTF-8表示，不声称知道上传前编码。恢复区分原生、外稿、空书、未知和
+未完事务；来源变更需重建上下文，旧包无清单不假报fresh。相关人物后置约束保留为required，
+预算不足停止；哈希不证明摘要或人物推断正确。完整边界见导入、任务路由及单章工作流。
+
+R5 收敛事件名称契约：规范名与旧名均能预检、记录和校验；未知名明确报错，既有冷却不变。
+旧工程缺人物卡且有明确本人状态时支持带来源说明的 `state_only`；空卡/不可读卡不回退，
+补卡后旧上下文包过期。备份顺序须记录编辑前的目标状态，不能仅凭最终文件声称已证实。
 
 ### 1. check_text.py — 7 Gate 机械闸口（v3.0 升级）
 
@@ -504,29 +543,32 @@ python scripts/outline_anchor.py check "{书名目录}" --chapter 37 --quota A
 
 ```bash
 python scripts/story_graph.py build "{书名目录}"
-python scripts/story_graph.py query "{书名目录}" --node "主角" --depth 2
+python scripts/story_graph.py query "{书名目录}" "主角" --depth 2
 python scripts/story_graph.py cascade "{书名目录}" --from-chapter 50 --desc "改纲：加入新反派"
 python scripts/story_graph.py update "{书名目录}" --chapter 37
 ```
 
-从 `entity_index.json` + 章节摘要构建节点（角色/事件/地点/物品/势力），提取关系边，支持级联标记（改纲后标记受影响节点）。**v5.0 新增 `update` 子命令**：每章写完后增量更新（只从本章摘要提取新实体和关系追加到图谱），避免全量 rebuild 的代价。
+从 `追踪/entity_index.json` + 章节摘要构建节点（角色/事件/地点/物品/势力），提取关系边，支持级联标记（改纲后标记受影响节点）。**v5.0 新增 `update` 子命令**：每章写完后增量更新（只从本章摘要提取新实体和关系追加到图谱），避免全量 rebuild 的代价。
 
 ### 14. research_agent.py — 联网调研（v4.0 新增）
 
 ```bash
-python scripts/research_agent.py search "中世纪盔甲" --save "参考资料/盔甲调研.md"
-python scripts/research_agent.py gap "参考资料/盔甲调研.md" --expected 5
+python scripts/research_agent.py keywords --genre 历史 --topic "中世纪盔甲"
+python scripts/research_agent.py gaps "{书名目录}" --json
+# 使用可用联网工具取得资料后，存储真实调研文本及来源
+python scripts/research_agent.py store "{书名目录}" --dimension "战争装备" --source-file "参考资料/盔甲调研.md" --url "{来源链接}"
 ```
 
-调用搜索引擎做题材知识调研，输出结构化摘要、缺口检测报告、关键词生成。纯标准库实现（urllib + json）。
+脚本提供关键词生成、知识库缺口检测与结构化存储；实际搜索由当次可用联网工具完成。没有搜索结果时不得声称已联网调研。
 
 ### 15. style_library.py — 风格库跨书复用（v4.0 新增）
 
 ```bash
 python scripts/style_library.py import "{旧书目录}" --name "旧书A风格"
-python scripts/style_library.py search --min-dialogue-ratio 30 --max-avg-sent 15
-python scripts/style_library.py apply "{新书目录}" --style "旧书A风格"
-python scripts/style_library.py delete --style "旧书A风格"
+python scripts/style_library.py search --keyword "旧书A风格" --format json
+# 从搜索结果取得真实 style_id 后应用或删除；脚本不支持按对话比例/句长过滤
+python scripts/style_library.py apply "{style_id}" --target "{新书目录}"
+python scripts/style_library.py delete "{style_id}"
 ```
 
 跨项目导入/搜索/应用/删除文风指纹，多书写作时迁移风格基线。
@@ -550,7 +592,7 @@ python scripts/content_expander.py analyze "正文/第037章.md" --target 3500 -
 python scripts/context_manager.py select "{书名目录}" --chapter 37 --max-chars 4000
 
 # 压缩多章摘要
-python scripts/context_manager.py compress "{书名目录}" --from 30 --to 36 --max-chars 1000
+python scripts/context_manager.py compress "{书名目录}" --from 30 --to 36 --output "追踪/压缩摘要_30-36.md"
 ```
 
 组件化上下文选取（章纲/人物卡/近章摘要/伏笔台账/设定摘要），按预算比例分配各组件字数，解决百万字长篇的上下文爆炸问题。
@@ -568,7 +610,7 @@ python scripts/novel_flow.py daily "{书名目录}" --chapters 3
 python scripts/novel_flow.py report "{书名目录}"
 
 # 改纲级联
-python scripts/novel_flow.py revise "{书名目录}" --from-chapter 50 --desc "加入新反派"
+python scripts/novel_flow.py revise "{书名目录}" --from-chapter 50 --description "加入新反派"
 ```
 
 编排分散工作流：status（诊断）→ prepare（写前准备）→ write（单章写作）→ daily（日更批量）→ revise（改纲级联）→ report（进度报告）。fail-fast 机制：检查不过不继续下一章。
@@ -646,7 +688,7 @@ python scripts/editorial_manager.py status "{书名目录}" --last 10
 python scripts/editorial_manager.py need-human "{书名目录}"
 ```
 
-管理多 Agent 协作写作流程的状态。snapshot 生成编辑团队启动上下文快照；record-review 追加审核结果到 `review_history.json`；status 输出表格格式状态报告；need-human 检测防死循环（单章返工上限 2 次、连续条件通过 3 章强制人工介入）。对应 `workflow/editorial-spawn.md` 的 Step 1 与 Step 7。
+管理多 Agent 协作写作流程的状态。snapshot 生成编辑团队启动上下文快照；record-review 追加审核结果到 `追踪/review_history.json`；status 输出表格格式状态报告；need-human 检测防死循环（单章返工上限 2 次、连续条件通过 3 章强制人工介入）。对应 `workflow/editorial-spawn.md` 的 Step 1 与 Step 7。
 
 ### 24. hooks.py — 自动化 Hook 机制（v6.0 新增）
 
@@ -697,7 +739,7 @@ python scripts/rag_retriever.py query "{书名目录}" "赶路过场" --light
 python scripts/rag_retriever.py status "{书名目录}"
 ```
 
-基于 `entity_index.py` 的 BM25 检索能力增强，侧重语义级相关章节检索。build 构建章节级 RAG 索引；query 两级 BM25+TF-IDF 检索输出可解释结果 + 写前上下文建议（`next_plot_context.md`），轻场景触发判定（赶路/过场自动跳过全量检索），查询缓存 + 命中可解释；status 输出索引覆盖率与缓存命中率。与 entity_index.py 互补使用。
+基于 `entity_index.py` 的 BM25 检索能力增强，侧重语义级相关章节检索。build 构建章节级 RAG 索引；query 两级 BM25+TF-IDF 检索输出可解释结果 + 写前上下文建议（`追踪/next_plot_context.md`），轻场景触发判定（赶路/过场自动跳过全量检索），查询缓存 + 命中可解释；status 输出索引覆盖率与缓存命中率。与 entity_index.py 互补使用。
 
 ### 26. common.py — 共享工具函数（v6.0 新增）
 
@@ -715,15 +757,52 @@ from config import SKILL_VERSION, BOOK_DIRS, TRACKING_FILES, SETTING_FILES
 
 全局配置常量集中管理：SKILL_VERSION/SKILL_NAME、书籍工程目录结构（BOOK_DIRS）、追踪/设定文件名（TRACKING_FILES/SETTING_FILES）、章节命名格式、BM25 参数等。修改一处即全局生效，避免散落在各脚本中的魔法数字。
 
+## 本地可编辑 Dashboard（v8.0）
+
+```bash
+python scripts/dashboard.py "书籍工程目录"
+# 或：python novel-cli.py dashboard "书籍工程目录"
+```
+
+Dashboard 默认仅绑定 `127.0.0.1`，可查看状态、章节、质量趋势、伏笔台账，并编辑
+`.md/.txt/.json/.yaml/.yml/.toml/.ini` 文本文件。浏览器每次打开文件都会取得 SHA-256
+revision；保存或删除必须提交同一 revision。若文件已被终端、同步软件或另一页面修改，API 返回
+`409 Conflict`，不会覆盖磁盘内容，也不会清空浏览器里的未保存缓冲区。
+异步加载期间继续输入会取消切换；旧文件的保存/删除响应不会改变新打开的文件。写请求串行执行，
+保存期间新输入仍保留为未保存修改；删除期间的新输入保留在编辑器，可保存重建文件。
+
+成功保存前，旧文件会备份到同目录的 `.文件名.dashboard-backup`；新内容先写入同目录临时文件，
+执行 `flush` + `fsync` 后再由 `os.replace` 原子替换。删除不会永久擦除文件，而是移动到书籍工程的
+`追踪/.dashboard-trash/`，可手动检查并恢复。
+
+可用 `--host` 显式改为非回环地址，但这会把编辑服务暴露到网络。Dashboard 没有身份认证或 TLS；
+改动监听地址后不能视为网络安全服务，只应在可信隔离网络中临时使用。请求体上限为 2 MiB，
+路径穿越、越界符号链接和非白名单扩展会被拒绝。
+
+所有页面/API 都检查 Host（主机名与实际端口）；默认仅接受 loopback 主机名。显式非回环
+`--host` 只接受配置的主机名或接收连接的本机接口地址，不能借任意 DNS 名访问。
+POST/DELETE 还要求严格同源 Origin 和每次服务启动独立的 `X-Dashboard-Token`。
+浏览器自动完成握手；脚本客户端须先用合法 Host 请求 `GET /api/session` 取得 `token`，
+再在写请求中同时发送 `Origin: http://合法主机:端口`、`X-Dashboard-Token: token` 和 JSON 请求体。
+跨源或非法 Host 不能取得令牌，缺少/错误凭据返回结构化 `403`；这防护来源伪造，**不是用户身份认证**。
+非法 UTF-8 内容（包括 JSON 孤立代理字符）或非法编码路径返回 `400`，不会创建备份或改动文件。
+
+前端行为测试直接执行发布的 HTML 内联脚本，可用 `node scripts/tests/dashboard_frontend.test.js`
+单独运行；`test_dashboard` 也会自动调用（无 Node 时明确跳过）。使用 Node 18+ 的本机或 CI 可运行，
+不需 npm 安装依赖。
+
 ## 测试套件（scripts/tests/，v6.0 新增）
 
-`scripts/tests/` 是核心脚本的单元测试套件，纯标准库（unittest）。**744 个测试覆盖 20 个脚本模块**（默认全量运行，CI 流水线 5 个 Python 版本 × 3 平台验证）：
+`scripts/tests/` 是核心脚本与发布契约的测试套件，纯标准库（unittest）。默认 runner 全量运行；收集数由 `skill.json` 与发布契约自动核对，跨平台流水线另做多版本冒烟验证。下列为代表性模块：
 
 - `test_common.py`（36）— common.py 共享工具函数
 - `test_config.py`（14）— config.py 配置常量
 - `test_check_text.py`（23）— check_text.py 7 Gate 闸口
 - `test_novel_flow.py`（16）— novel_flow.py 写作流程编排
-- `test_context_manager.py`（15）— context_manager.py 上下文管理
+- `test_context_manager.py` — 上下文预算、关键段落召回及来源核验
+- `test_source_materialize.py` — 原稿字节与会话字符串保真、拒绝覆盖
+- `test_resume.py` — 原生/外稿/空/未知/未完事务的只读分流
+- `test_run_tests.py` — 测试结果的通过、失败与跳过分类
 - `test_static_check.py`（19）— static_check.py 静态代码质量
 - `test_benchmark.py`（16）— benchmark.py 性能基准
 - `test_rhythm_guard.py`（18）— rhythm_guard.py 节奏配额
@@ -738,7 +817,8 @@ python scripts/tests/run_tests.py
 python scripts/tests/run_tests.py test_common test_check_text
 ```
 
-`run_tests.py` 是测试运行器，输出形如 `test_common.py ............... 36/36 通过` 的进度行，末尾汇总 `总计：744/744 通过`。退出码 0 全通过 / 1 有失败 / 2 参数错误。
+`run_tests.py` 是测试运行器，逐模块及末尾分别汇总通过、跳过和失败；skip不计入实际执行通过，
+也不会单独令整套测试失败。退出码 0 无失败 / 1 有失败 / 2 参数错误。详细原因查看pytest或unittest报告。
 
 ## 编辑团队（assets/agents/，v2.1 新增）
 
@@ -763,9 +843,9 @@ agent 定义文件 + 部署/降级/防死循环协议。
 ## provenance
 
 - maintainer: 熊小雨
-- version: 7.0.0
+- version: 8.0.0
 - created: 2026-07-26
-- last_reviewed: 2026-08-10
+- last_reviewed: 2026-08-27
 - review_interval_days: 90
 - source_references:
   - skills/novel-creator-skill（借鉴五层一致性/Beat Sheet/节奏配额/语义级节奏审查/知识图谱/联网调研/风格库设计，未引用内容）

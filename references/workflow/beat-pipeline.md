@@ -1,118 +1,79 @@
 # Beat Sheet 多步流水线（beat-pipeline）
 
-单次生成长章节时，AI 容易压缩剧情、跳过细节、一笔带过。Beat Sheet 通过拆分步骤
-强制每个场景充分展开——把一章拆成若干 Beat（分镜），逐 Beat 扩写再串合。
+Beat 是事件授权单元，scene unit 才是实际生成单元。Beat 流水线只替换
+`chapter-loop.md` Step 4 的编排方式，欠账门、required context、章意图、门禁与事务均不省略。
 
 ## 何时启用
 
-满足以下任意一条即启用 Beat Sheet，不用走标准单章循环的 Step 4：
+适用于高潮、反转、大结算、长章或作者需要分场景写作的章节。日常章可直接用单章循环。
+单章遇阻时可在剩余修复额度内切换 Beat；已经修两轮仍有 blocking/P0，必须 `gate_blocked`，
+不得把切换流水线当第三轮自动重写，也不能把失败降成 advisory。
 
-- 高潮章（快档，触发 A/B/C 配额）
-- 反转章（认知颠覆，信息量大）
-- 大结算章（卷末/终局）
-- 字数 >4000 字的长章
-- 单章门禁连续 2 次失败的章
+## Step 1：准备与预算门
 
-日常日更章不强制启用，按 `chapter-loop.md` 单 Agent 循环即可。
-
-## Step 1：生成 Beat Sheet
-
-读章纲 → 拆解成 Beat（分镜）。一个章拆 4–8 个 Beat，总字数预算 = 章纲字数预算。
-每个 Beat 按以下模板写：
-
-```markdown
-## Beat {N}：{Beat 名称}
-- 场景：{地点/时间}
-- 出场人物：{}
-- 核心动作：{这一拍发生什么}
-- 目标情绪：{读者应该感到什么}
-- 字数预算：{}字
-- 钩子：{Beat 末尾留什么（最后一个 Beat 的钩子 = 章尾钩子）}
-```
-
-Beat Sheet 产出存入 `大纲/beat-sheet_第XXX章.md`。Beat 颗粒度：一个 Beat = 一个场景
-或一次情绪转折，不要拆太碎（拆到每句 = 失去场景完整性）。
-
-## Step 2：节奏预检
-
-Beat Sheet 定稿前先查三件事，越界就改 Beat Sheet 不改正文：
-
-- **Beat 节奏分布**：是否有连续 3 个以上同类型 Beat（全是对话/全是打斗）？
-  有 = 节奏单调，插入异类型 Beat。
-- **A/B/C 配额**：Beat 中触发了几项？>1 = 越界，改 Beat Sheet 把多余项挪到后续章
-  （参照 `craft/reverse-brake.md`）。
-- **事件冷却**：本章的主事件类型是否在冷却期内？在 = 改 Beat 换事件类型。
-
-## Step 3：逐 Beat 扩写
-
-按 Beat 顺序逐个扩写，每个 Beat 作为独立生成单元：
-
-- 只给写作 Agent 当前 Beat + 上下文速记（前一个 Beat 的末尾段落）
-- 每个 Beat 写完后：跑 `check_text.py` 检查这段（字数/禁用词/7 Gate）
-- Beat 之间的过渡：用动作/场景切换，不用「与此同时」或「另一边」
-
-逐 Beat 扩写的好处：单次生成上下文短，AI 不会为了赶进度而压缩场景。
-坏处是过渡容易生硬，Step 4 专门处理。
-
-## Step 4：串联合成
-
-把所有 Beat 的正文按顺序拼接，检查三件事：
-
-- **过渡自然度**：Beat 之间是否生硬？生硬处补一句动作/场景切换
-- **全章字数**：是否在章纲预算内？超了按 Beat 字数预算找超支 Beat 删减
-- **结构四拍**：承接→发展→结算→钩子是否齐全？（参照 `craft/pacing-and-hooks.md`）
-
-合成后产出 `正文/第XXX章_{标题}.md`。
-
-## Step 5：全章门禁
-
-整章合成后跑四项门禁，四项全过才算完成：
+先按 `chapter-loop.md` 核对欠账和必需来源；若需改纲，须在 prepare 前取得授权并完成。
+读取 `references/craft/scene-rendering.md`，生成以 `assets/templates/chapter-intent.json`
+为唯一字段契约的完整 Brief，明确 ending_mode、情绪前后状态与触发/选择、允许事件及禁放信息。
+若授权 beats 不足，停止并输出 literal `outline_underfilled` 和具体 `missing_beat_budget`，
+不能用待补充 Brief、重复办理动作或新剧情补字数。
 
 ```bash
-python scripts/check_text.py "正文/第XXX章.md" --min-chars N --max-chars M --gate-report
-python scripts/rhythm_guard.py --chapter-file "正文/第XXX章.md" --quota "追踪/节奏配额.md"
-python scripts/style_fingerprint.py extract "正文/第XXX章.md" --output tmp_fp.md
-python scripts/style_fingerprint.py compare tmp_fp.md "设定/文风锚.md"
+python scripts/chapter_transaction.py prepare "{book}" --chapter {N}
 ```
 
-四项分别查：7 Gate/字数/伏笔、A/B/C 配额与事件冷却、文风指纹提取、文风偏离对比。
-任何一项 FAIL 就回到对应 Beat 改，不要在合成稿上零敲碎打。
+`{stage}`/`{chapter_file}` 只采用 prepare 输出；修旧章沿用原名。正文合成前正式文件不变。
+章意图、Beat Sheet、场景片段与报告放在 stage 和正式工程之外的本次工作目录；不得写入
+stage 的大纲目录。stage 只人工改本章正文和追踪五表，gate/index 由脚本生成。
 
-## Step 6：更新追踪
+## Step 2：Beat Sheet 与节奏预检
 
-同 `chapter-loop.md` Step 7：章节摘要、角色状态、伏笔台账、时间线、节奏配额五文件
-全部回写后，禁止开写下一章。Beat Sheet 文件保留归档，不删——复盘时用来对照
-「计划 vs 实际」。
+每个 Beat 写清：授权事件、触发/阻力、行动与反应、可观察变化、情绪前态 → 后态、预算。
+再把有关联的 beats 合并、交织成场景；不固定一条 beat 一段、一条 beat 一个场景或一定 4–8 拍。
+场景检查卡包含目的、阻力、变化、感官锚、行动/反应、过渡。
 
-## Beat Sheet 与编辑团队的关系
+- 类型过于单一时调整已授权事件的呈现方式，不擅自插入新的异类型事件。
+- 配额或冷却越界时停止并提出授权内调整；若需改纲，recover 后改，再 prepare。
+- serial 的章末问题只能来自授权事件；closed/finale 的 hook_question 必须为空，以结算和
+  闭合余韵收束。finale 不得把多余配额事件挪到不存在的后续章，须交作者取舍。
 
-Beat Sheet 和编辑团队（`craft/editorial-team.md`）解决不同问题，可组合使用：
+## Step 3：按 scene unit 渲染
 
-| 维度 | Beat Sheet | 编辑团队 |
-|---|---|---|
-| 解决问题 | 怎么写（拆步骤防压缩） | 谁来写（职责分离防污染） |
-| 产物 | 分镜大纲 + 逐 Beat 正文 | Chapter Brief + 写作特工产出 |
+每次调用独立写作 Agent，实际传入完整章意图与来源内容、场景渲染规则、本场景所覆盖的 beats、
+当前场景进入状态及必要前段。不能只给当前 Beat + 上段，也不能只链接未部署的参考路径。
+Brief 字段与阻断协议见 `assets/agents/novelist.md`。
 
-组合用法：策划主编出 Beat Sheet → 写作特工逐 Beat 扩写 → 反 AI 编辑全章门禁。
-日常章用 Beat Sheet 不用编辑团队，关键章两者叠加。
+- 允许在授权内合并、交织、局部重排 beats，不得改状态终点、禁放信息或结尾模式。
+- 把情绪放进触发 → 选择/代价 → 行动反馈：兑现前后的态度、反应和互动须可感知。
+- 详写有信息、阻力、选择或关系变化的回合；重复核看、等待、收据交付没有新功能就合并，
+  不把机械动作当情绪交付，也不删掉必要验收证据。
+- 局部片段检查只是诊断；不能把片段的结尾当章尾或把单段字数当全章门禁。
 
-## Beat Sheet 模板
+## Step 4：合成 pending draft
 
-`大纲/beat-sheet_第XXX章.md` 的文件头：
+按戏剧因果串联合成，核对指代、时序、动机与过渡，消除分段生成的重复交代。
+结构按 ending_mode 选择“承接 → 发展 → 结算 → 已授权悬念/闭合余韵”；首章上章承接可 N/A。
+全章候选只写入 `{stage}/正文/{chapter_file}`，不是正式正文；不用未授权事件补足预算。
 
-```markdown
-# Beat Sheet：第XXX章 {标题}
+## Step 5：整章门禁、自查与追踪事务
 
-- 章纲：大纲/章纲_第XXX章.md
-- 节奏档位：{慢/中/快}
-- A/B/C 预声明：{至多触发 X 项}
-- 全章字数预算：{}-{}字
+执行 `chapter-loop.md` Step 5–7：机器诊断、总编辑语义自查、五表暂存并核对同步。
+去 AI 味时保留反应、态度、互动功能，修复指代和连接，不删成纯事件流水账。
 
-## Beat 清单
-[按 Step 1 模板逐个列出]
-
-## 节奏预检结果
-- Beat 类型分布：{}
-- A/B/C 触发：{}
-- 事件冷却：{}
+```bash
+python scripts/chapter_transaction.py validate "{book}" --min-chars {下限} --max-chars {上限} --declare "{配额,事件类型,档位}"
+# 自查真实通过、所有 blocking/P0 清零之后
+python scripts/chapter_transaction.py commit "{book}" --self-review-confirmed
 ```
+
+validate 只检查机器门禁、追踪和哈希，不验证语义报告；总编辑必须真实核对后一项。
+声明以减号开头时用 `--declare=-,world_painting,中`。任何改稿都使旧验证/受影响审核过期。
+blocking/P0 最多自动修两轮，仍失败输出 `gate_blocked`，保留 checkpoint 与 pending draft，
+停止自动改写且不提交。团队、Beat、模型和会话之间共享该章该任务的修复计数，不能重置。
+
+五表与正文共同 commit 成功才算本章完成并允许开下一章；finale 不预告不存在的下一章。
+Beat Sheet 保留在工作目录供复盘，不是事务提交目标。
+
+## 与编辑团队组合
+
+策划主编提供完整 Brief 与场景计划，写作特工按场景生成，反 AI 编辑和连载核实官审整章；
+仍由总编辑统一管理本章 stage、两轮上限与提交。团队细节见 `references/craft/editorial-team.md`。

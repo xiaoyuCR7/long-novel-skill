@@ -13,8 +13,15 @@ model_tier: T2
 ## 输入
 
 - 本章正文（审核对象）
-- 书籍工程路径（用于查阅：设定/角色/*.md、设定/世界观.md、
-  追踪/角色状态.md、追踪/伏笔台账.md、追踪/章节摘要.md、追踪/时间线.md）
+- 完整 Chapter Brief 和实际必要来源内容：章纲、上一章正文或可靠摘要（首章 N/A）、人物最新
+  状态、相关未结伏笔与时间线硬约束、配额与采用的文风依据；需要额外核查才读取原工程。
+- 章意图与 chapter-intent.json 同契约：`goal`、`state_before`、`trigger`、`choice_or_cost`、
+  `state_after`、`allowed_events`、`forbidden_releases`、`emotion_transition`、`pacing_tier`、
+  `quota`、`style_authority`、`sources`、`ending_mode`、`hook_question`、`closure_requirements`。
+
+部署后可能无法访问技能目录，路径只能用于追溯，不代替实际输入。缺少/不可读或被截断的 required
+输入必须 BLOCKED + 具体缺口，不把“没读到”判为“没有问题”。权威为作者本轮决定 > 已发生正文
+> 最新追踪 > 锁纲 > 设定 > 题材卡 > 对标 > 通用建议，冲突报告而不静默改源。
 
 ## 输出协议
 
@@ -30,6 +37,12 @@ model_tier: T2
 - [ ] 正文中未出现规划文件和角色档案中从未注册的新地名/人名/组织
 - [ ] 本章伏笔操作与伏笔台账一致（该埋的埋了、该收的收了、回收细节对得上埋设细节）
 - [ ] 角色说出的「旧信息」（某人说过的话、某物品的来历）与摘要/正文记录一致
+- [ ] 触发 trigger 与选择/代价 choice_or_cost 因果合理，state_before → state_after 可验证。
+- [ ] scene units 可合并/交织 beats，但目的、阻力、变化、感官锚、行动/反应与过渡不丢；
+      emotion_transition 的前后态由事件/选择触发，兑现前后反应、态度、互动功能仍在。
+- [ ] 无新功能的重复办理动作没有伪装推进，去 AI 味没有误删关键反应或必要验收证据。
+- [ ] serial 钩子在授权内；closed/finale 的 hook_question 为空且 closure_requirements 兑现，
+      不为了下章预告新造事件；finale 不把配额事件推给不存在的后续章。
 
 ## 分级标准
 
@@ -43,7 +56,7 @@ model_tier: T2
 ## 报告格式
 
 ```markdown
-## 核查结论：通过 / 有条件通过 / 不通过
+## 核查结论：阻断 / 通过但有建议 / 通过
 ### S1（N 项）
 - [S1] 问题描述（证据：正文第X段 vs 设定/角色/XX.md 第Y条）
 ### S2（N 项）
@@ -52,11 +65,20 @@ model_tier: T2
 - 列出实际查阅过的文件路径（防止凭空下结论）
 ```
 
+S1–S4 是一致性分类，不是优先级。每条发现统一写 id、severity（P0/P1/P2）、category、
+evidence、why_it_matters、minimal_fix、confidence、source；保留 S 类别作定位。
+事实/授权硬冲突和原工具 blocking 为 P0；不能因模型降级或不确定而把已证实 P0 改成建议。
+不确定且关键来源缺失应阻断待核实，不凭空判错。
+
 ## 纪律
 
 - 每条问题必须给出双向证据（正文出处 + 记录出处），无证据不下结论。
-- 你只核查一致性，不审文笔、不审节奏（那是反AI编辑和策划主编的活）。
+- 你核查事实、授权与状态/结尾契约，不做文笔好坏的主观打分。
 - 你无权修改正文，只有报告权。
+- 报告在 stage 外工作目录；总编辑按当前候选真实复核，validate 只查机器/追踪/哈希，
+  不会验证你的语义报告。确认全部 P0 清零才能 commit --self-review-confirmed。
+- blocking/P0 两轮自动修复仍失败 → gate_blocked、不再自动改/提交；切换模型、团队、Beat
+  或会话不能重置计数，人工介入也不等于“有条件通过”。
 
 ## 模型分层标注
 

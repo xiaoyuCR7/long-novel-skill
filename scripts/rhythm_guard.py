@@ -71,46 +71,26 @@ import os
 import re
 import sys
 
+from config import EVENT_META, EVENT_ALIASES, normalize_event
+
 # A/B/C 配额冷却（触发后接下来 N 章不得再触发同类；与事件 cooldown 是独立概念，不可混用）
 QUOTA_COOLDOWN = {"A": 2, "B": 1, "C": 3}
 
 # v2.0 事件矩阵：5+1 类事件类型与冷却期
 # 向后兼容映射：conflict→A，bond→B（部分），revelation→C（部分）
-EVENT_TYPES_NEW = ["conflict", "bond", "faction", "world", "crisis", "revelation"]
-
-# 事件冷却/连续上限单一来源：config.EVENT_META（失败回退到内联常量，值保持一致）
-try:
-    from config import EVENT_META
-    EVENT_COOLDOWN_NEW = {k: v["cooldown"] for k, v in EVENT_META.items()}
-    EVENT_CONSECUTIVE_LIMIT = {k: v["consecutive_limit"] for k, v in EVENT_META.items()}
-except ImportError:
-    EVENT_COOLDOWN_NEW = {
-        "conflict": 2, "bond": 3, "faction": 4, "world": 3, "crisis": 2, "revelation": 5,
-    }
-    EVENT_CONSECUTIVE_LIMIT = {
-        "conflict": 2, "bond": 3, "faction": 2, "world": 2, "crisis": 2, "revelation": 1,
-    }
+EVENT_TYPES_NEW = list(EVENT_META)
+EVENT_COOLDOWN_NEW = {k: v["cooldown"] for k, v in EVENT_META.items()}
+EVENT_CONSECUTIVE_LIMIT = {k: v["consecutive_limit"] for k, v in EVENT_META.items()}
 # A/B/C → 新事件类型映射（双向兼容）
 QUOTA_TO_EVENT = {"A": "conflict", "B": "bond", "C": "revelation"}
 EVENT_TO_QUOTA = {"conflict": "A", "bond": "B", "revelation": "C"}
-
-# 事件类型别名（兼容旧版 conflict_thrill 等）
-EVENT_ALIASES = {
-    "conflict_thrill": "conflict",
-    "bond_deepening": "bond",
-    "faction_building": "faction",
-    "world_painting": "world",
-    "tension_escalation": "crisis",
-    "revelation": "revelation",
-}
 
 # gentle_window：每5章至少1次 bond 或 world
 GENTLE_WINDOW_SIZE = 5
 GENTLE_WINDOW_TYPES = ("bond", "world")
 
 # 旧版事件类型名（仅用于声明解析向后兼容；冷却值统一走 EVENT_COOLDOWN_NEW）
-EVENT_TYPES = ["conflict_thrill", "bond_deepening", "faction_building",
-               "world_painting", "tension_escalation", "revelation"]
+EVENT_TYPES = list(EVENT_ALIASES)
 
 # 向后兼容别名：旧事件名 → 冷却值（归一化后查 EVENT_COOLDOWN_NEW，单源真相）
 EVENT_COOLDOWN = {old: EVENT_COOLDOWN_NEW[new] for old, new in EVENT_ALIASES.items()}
@@ -181,29 +161,41 @@ def _extract_decl_from_text(text):
     quota_set = set()
     event = None
     gear = None
+    fields = re.compile(r"(?P<field>\bquota\b|配额(?:预声明|声明)?|\bevent\b|事件(?:类型)?(?:声明)?|"
+                        r"\bgear\b|档位|档)(?:[ \t]*[:：=][ \t]*|[ \t]+)")
     for line in text.splitlines():
         if not any(k in line for k in DECL_KEYWORDS):
             continue
-        # A/B/C
-        for letter in re.findall(r"[ABC]", line):
-            quota_set.add(letter)
-        # event：先查新版5类，再查旧版别名
-        if event is None:
-            for ev in EVENT_TYPES_NEW + EVENT_TYPES:
-                if ev in line:
-                    event = ev
-                    break
-        # gear：仅在含「档」的行提取，避免「中」误匹配
-        if gear is None and "档" in line:
-            m = GEAR_RE.search(line)
-            if m:
-                gear = m.group(1) or m.group(2)
-    # 排除「不触发/无」语义（若声明行明确写不触发，清空 quota_set）
-    for line in text.splitlines():
-        if any(k in line for k in DECL_KEYWORDS):
-            if "不触发" in line or re.search(r"配额\s*[:：]\s*(无|不|-)", line):
-                quota_set.clear()
-                break
+        # Markdown wrappers do not change field semantics. Values still pass
+        # the exact CLI contract; never search inside BAD or world_typo.
+        clean = line.replace("**", "").replace("`", "")
+        clean = re.sub(r"\s*-->\s*$", "", clean)
+        matches = list(fields.finditer(clean))
+        for index, match in enumerate(matches):
+            field = match.group("field")
+            end = matches[index + 1].start() if index + 1 < len(matches) else len(clean)
+            value = clean[match.end():end].strip(" \t，,；;。")
+            value = re.split(r"[（(]", value, maxsplit=1)[0].strip()
+            if value.startswith("[") and value.endswith("]"):
+                value = value[1:-1]  # One filled template slot, not a list of alternatives.
+            if field == "event" or field.startswith("事件"):
+                if not normalize_event(value):
+                    raise ValueError(f"未知事件类型：{value}；可用：{', '.join(EVENT_TYPES_NEW)}")
+                if event and normalize_event(event) != normalize_event(value):
+                    raise ValueError("声明包含冲突的事件类型")
+                event = value
+            else:
+                parsed_quota, parsed_event, parsed_gear = _parse_declare(value)
+                if field == "quota" or field.startswith("配额"):
+                    if parsed_event or parsed_gear:
+                        raise ValueError(f"无效配额声明：{value}")
+                    quota_set.update(parsed_quota)
+                else:
+                    if parsed_quota or parsed_event or not parsed_gear:
+                        raise ValueError(f"无效档位声明：{value}")
+                    if gear and gear != parsed_gear:
+                        raise ValueError("声明包含冲突的档位")
+                    gear = parsed_gear
     return quota_set, event, gear
 
 
@@ -214,19 +206,20 @@ def _parse_declare(s):
     gear = None
     for part in s.split(","):
         p = part.strip()
-        if not p or p in ("无", "不触发", "无触发", "-"):
+        if not p or p in ("无", "不触发", "无触发", "-", "none"):
             continue
         if p in EVENT_TYPES_NEW or p in EVENT_TYPES:
+            if event and normalize_event(event) != normalize_event(p):
+                raise ValueError("声明包含冲突的事件类型")
             event = p
-        elif p in ("快", "慢", "中"):
-            gear = p
-        elif p in ("快档", "慢档", "中档"):
+        elif p in ("快", "慢", "中", "快档", "慢档", "中档"):
+            if gear and gear != p[0]:
+                raise ValueError("声明包含冲突的档位")
             gear = p[0]
+        elif re.fullmatch(r"[ABC](?:[+／/、\s]*[ABC])*", p):
+            quota_set.update(re.findall(r"[ABC]", p))
         else:
-            letters = re.findall(r"[ABC]", p)
-            if letters:
-                quota_set.update(letters)
-            # 也兼容 event 写成中文名（少用）
+            raise ValueError(f"无法识别声明项：{p}；事件可用：{', '.join(EVENT_TYPES_NEW)}")
     return quota_set, event, gear
 
 
@@ -274,9 +267,10 @@ def run_checks(records, current, quota_set, event, gear):
     events_new = parse_event_records(records)
     if event:
         ev_norm = normalize_event(event)
-        if ev_norm:
-            new_fails = check_event_cooldown_new(events_new, current, ev_norm)
-            fails.extend(new_fails)
+        if not ev_norm:
+            raise ValueError(f"未知事件类型：{event}")
+        new_fails = check_event_cooldown_new(events_new, current, ev_norm)
+        fails.extend(new_fails)
 
     # v2.0 新增：gentle_window 检查
     gentle_ok, gentle_msg = check_gentle_window(events_new, current)
@@ -326,22 +320,6 @@ def _format_decl(quota_set, event, gear):
     return "，".join(parts)
 
 
-def normalize_event(event):
-    """将事件类型规范化为新版5类（兼容旧版别名）。返回 None 表示无法识别。"""
-    if not event:
-        return None
-    event = event.strip()
-    if event in EVENT_TYPES_NEW:
-        return event
-    if event in EVENT_ALIASES:
-        return EVENT_ALIASES[event]
-    # 尝试前缀匹配
-    for alias, canonical in EVENT_ALIASES.items():
-        if alias.startswith(event) or event.startswith(alias.split("_")[0]):
-            return canonical
-    return None
-
-
 def event_to_quota(event):
     """事件类型 → A/B/C 配额字母（双向兼容）。"""
     ev = normalize_event(event)
@@ -360,6 +338,8 @@ def parse_event_records(records):
     events_new = []
     for chap, ev, _ in records["events"]:
         ev_norm = normalize_event(ev)
+        if ev.strip() and not ev_norm:
+            raise ValueError(f"第{chap}章历史事件类型无法识别：{ev}")
         if ev_norm:
             events_new.append((chap, ev_norm))
     # 也从 A/B/C 配额记录中推断事件（向后兼容）
@@ -522,8 +502,8 @@ def record_event(quota_path, chapter_no, event):
             content = "".join(lines)
         with open(quota_path, "w", encoding="utf-8") as f:
             f.write(content)
-    except OSError:
-        pass
+    except (OSError, UnicodeError):
+        return None
     return line
 
 
@@ -579,14 +559,14 @@ def main():
     if args.recommend:
         try:
             records = parse_quota_file(args.quota)
-        except OSError as e:
+            events_new = parse_event_records(records)
+        except (OSError, ValueError) as e:
             print(f"错误：无法读取配额文件 {args.quota}: {e}", file=sys.stderr)
             return 2
         gear = args.recommend.strip()
         if gear not in ("快", "中", "慢"):
             print(f"错误：--recommend 参数需为 快/中/慢，收到：{gear}", file=sys.stderr)
             return 2
-        events_new = parse_event_records(records)
         # 确定下一章章号
         next_chap = args.chapter if args.chapter > 0 else (
             max((c for c, _ in events_new), default=0) + 1
@@ -641,7 +621,7 @@ def main():
 
     try:
         records = parse_quota_file(args.quota)
-    except OSError as e:
+    except (OSError, ValueError) as e:
         print(f"错误：无法读取配额文件 {args.quota}: {e}", file=sys.stderr)
         return 2
 
@@ -662,15 +642,19 @@ def main():
 
     # 确定声明
     if args.declare:
-        quota_set, event, gear = _parse_declare(args.declare)
+        try:
+            quota_set, event, gear = _parse_declare(args.declare)
+        except ValueError as e:
+            print(f"错误：{e}", file=sys.stderr)
+            return 2
     else:
         try:
             with open(args.chapter_file, "r", encoding="utf-8-sig") as f:
                 ch_text = f.read()
-        except OSError as e:
+            quota_set, event, gear = _extract_decl_from_text(ch_text)
+        except (OSError, ValueError) as e:
             print(f"错误：无法读取章节文件 {args.chapter_file}: {e}", file=sys.stderr)
             return 2
-        quota_set, event, gear = _extract_decl_from_text(ch_text)
         if not (quota_set or event or gear):
             print(f"提示：未在 {os.path.basename(args.chapter_file)} 中解析到节奏声明"
                   f"（配额/事件/档位），建议在章纲批注中声明或改用 --declare 预检。")
@@ -679,7 +663,11 @@ def main():
     print(f"声明：{_format_decl(quota_set, event, gear)}")
     print()
 
-    fails, warns = run_checks(records, current, quota_set, event, gear)
+    try:
+        fails, warns = run_checks(records, current, quota_set, event, gear)
+    except ValueError as e:
+        print(f"错误：{e}", file=sys.stderr)
+        return 2
 
     for f in fails:
         print(f"  [FAIL] {f}")

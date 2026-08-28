@@ -1,230 +1,92 @@
 # 编辑团队协作协议
 
-单 Agent 写作存在三个根性问题：AI幻觉（捏造设定）、角色错乱（位置/能力/语气错误）、
-Agent 思路污染正文（分析性文字渗入小说）。编辑团队通过职责分离在生产流程内建防火墙。
+团队只分工，不另建提交机制。日常章可 solo，高潮、反转、重要修订或作者要求时可用团队；
+切换团队不能重置本章的修复次数。角色定义与实际部署见 `assets/agents/README.md`。
 
-> 本文件是方法论。四个角色的可部署定义文件、部署方式、Fallback 链、防死循环协议
-> 在 `assets/agents/`（含 `assets/agents/README.md` 与 `planning-editor.md` /
-> `novelist.md` / `anti-ai-editor.md` / `consistency-reviewer.md`）。
+## 四个角色与总编辑
 
-## 何时启用编辑团队
+- 策划主编：读必要来源，校验事件/预算边界，交付完整 Chapter Brief；不写正文。
+- 写作特工：在已授权范围内生成候选正文；不直接写正式文件。
+- 反 AI 编辑：找表达问题、保留情绪功能，输出报告与候选润色稿。
+- 连载核实官：核对事实/状态/时间线/伏笔，只有报告权。
+- 总编辑：给各角色真实内容、管理 stage 与修复计数、实际自查、决定是否可以 commit。
 
-- 卷末大高潮章
-- 关键转折/反转章
-- 上架/签约前的重要章节
-- 作者主动要求「双审」「团队写这章」
-- 单章门禁连续2次失败
+写作角色可用独立无上下文 Agent；其他角色可按定义内联扮演。不可用时报告实际降级，
+不假称已运行多角色或机器门禁，不能把 blocking 改成 advisory。
 
-日常日更不强制启用，按 `chapter-loop.md` 单 Agent 循环即可。
+## 唯一 Chapter Brief 契约
 
-## 团队架构（轻量四角色）
+字段以 `assets/templates/chapter-intent.json` 为准，含 goal、state_before、trigger、
+choice_or_cost、state_after、allowed_events、forbidden_releases、emotion_transition、
+pacing_tier、quota、style_authority、sources、ending_mode、hook_question 及 closure_requirements。
+可用 `assets/templates/chapter-brief.md` 包装，不另列一套可省略字段的情节点模板。
 
-```
-作者
-  │
-  ▼
-总编辑（主 Agent，Claude Code 本身）
-  │  协调全流程，汇总报告，作最终裁判
-  ├──► 策划主编（可由主 Agent 兼任）
-  │     读章纲+人物卡+近章摘要 → 生成 Chapter Brief → 传给写作特工
-  │
-  ├──► 写作特工（用子代理 spawn，无上下文）
-  │     只接收 Brief，只输出纯正文，严格隔离 meta 信息
-  │
-  ├──► 反AI编辑（可由主 Agent 兼任）
-  │     对正文执行 7 Gate 检测 + 两遍式润色
-  └──► 连载核实官（可由主 Agent 兼任）
-       核查事实冲突、伏笔断线、角色属性一致性
-```
+Brief 必须实际包含：
 
-**轻量原则**：策划主编/反AI编辑/连载核实官可由主 Agent 兼任（用不同 prompt 切换视角），
-只有「写作特工」建议用子代理 spawn（隔离上下文，防污染）。
+1. 已填写的完整章意图；情绪为前态 → 后态并指明触发、选择/代价，非单个情绪词。
+2. 章号、标题、字数预算与 scene units；允许多个 beats 合并/交织，不让 beat 列表决定段落形状。
+3. 本章章纲、上一章正文或可靠摘要（首章 N/A）、出场人物最新状态、未结伏笔/时间线硬约束。
+4. 本章采用的文风依据与来源内容；来源路径是证据，不是内容替代品。
+5. `references/craft/scene-rendering.md` 的实际规则内容，尤其场景目的/阻力/变化/感官锚/
+   行动反应/过渡、情绪兑现、重复动作取舍与去 AI 味后的连接恢复。不要假设孤立 Agent 能打开该路径。
 
-各角色的完整 prompt（含 frontmatter `name:`/`description:`）见 `assets/agents/` 下对应文件。
-spawn 协议、模型分级建议、Fallback 链、防死循环协议见 `assets/agents/README.md`。
+required 缺失/不可读 → `required_context_missing`；预算不能无损容纳 →
+`required_context_over_budget`；授权事件撑不起篇幅 → literal `outline_underfilled` +
+具体 `missing_beat_budget`。以上均停止，不交付带待补充标记却可继续写的 Brief。
 
-## Chapter Brief 模板（策划主编产出）
+## 结尾与正文隔离
 
-```markdown
-# 第N章 Chapter Brief
-
-## 基本信息
-- 章节号：第N章
-- 标题（暂定）：{}
-- 字数预算：{}-{} 字
-- 节奏档位：[慢档/中档/快档]
-- A/B/C 配额预声明：[本章至多触发 X 项，具体是 A/B/C 中的哪个]
-
-## 本章任务
-- 核心事件：{}
-- 目标情绪：{}
-- 出场人物：{}（附各人当前状态一句话）
-
-## 情节点清单
-1. {} （字数预算 {}）
-2. {} （字数预算 {}）
-...
-
-## 结构四拍
-- 承接：如何接住上章钩子
-- 发展：核心事件展开
-- 结算：本章给读者什么
-- 钩子：章尾留什么
-
-## 伏笔操作
-- 本章应埋：{}
-- 本章应推进：{}
-- 本章应回收：{}
-
-## 硬约束（禁区）
-- 不得触碰的剧情：{}
-- 不得提前揭露的秘密：{}
-- 不得越界的配额：{}
-```
-
-## 写作特工 spawn 协议
-
-```
-Agent(subagent_type="general_purpose_task", prompt="""
-你是小说写作特工。只输出纯正文，不输出任何分析、说明、meta信息。
-
-接收 Chapter Brief：
-[粘贴完整 Brief]
-
-规则：
-1. 只输出 NOVEL_TEXT_START 到 NOVEL_TEXT_END 之间的纯小说正文
-2. 正文中不得出现 [说明]、（注：）、TODO、大纲语言
-3. 按章纲情节点清单写，字数在预算内
-4. 结构四拍齐全：承接→发展→结算→钩子
-5. 对话遮住名字能认出谁说的
-6. 设定挂在动作/冲突/细节上，不成段讲解
-""")
-```
-
-**输出隔离**：写作特工只输出 `NOVEL_TEXT_START...NOVEL_TEXT_END` 标记内的纯正文。
-若正文中出现 `[说明]`/`TODO`/分析性段落 → P0 重写。
-
-## 正文隔离协议
-
-| 角色 | 允许输出 | 严禁输出 |
-|---|---|---|
-| 写作特工 | NOVEL_TEXT 标记内纯正文 | 分析、角色定位、写作思路、meta注记 |
-| 反AI编辑 | 报告 + 润色后正文 | 在正文中插入任何注释 |
-| 连载核实官 | 结构化核查报告 | 直接修改正文 |
-| 总编辑 | 最终章节包（正文与报告分区） | 将审核意见混入正文区 |
-
-## 连载核实官检查清单
-
-每章必须核查（不得省略）：
-
-- [ ] 所有出场角色的当前地理位置与角色状态文件一致
-- [ ] 所有出场角色的能力边界未被违反
-- [ ] 已确认死亡/离开的角色未在正文中复活（非回忆/幻觉场景）
-- [ ] 本章时间点与上一章时间点的推进逻辑合理
-- [ ] 正文中未出现规划文件和角色档案中从未注册的新地名/人名/组织
-- [ ] 本章伏笔操作与伏笔台账一致（该埋的埋了、该收的收了）
-
-## 自由创作与规划的平衡
-
-**策划主编负责遵守（硬约束）**：
-- 当前章节的情节任务必须推进
-- 本章禁区不得触碰
-- 角色位置和状态的真实性
-
-**写作特工负责创新（软自由）**：
-- 章节入口角度（8种模式轮换，不重复）
-- 场景的具体呈现方式
-- 对话的具体内容和节奏
-- 细节描写的取舍
-
-**没有任何角色有权限做的事**：
-- 改变小说主线规划
-- 让角色提前到达不该到的地方
-- 发明规划文件外的重要设定
+- serial：结算后留下已授权、下一章可承接的问题。
+- closed/finale：hook_question 必须为空，按 closure_requirements 闭合，不强制钩子或下章预告。
+  finale 不得把配额冲突挪给不存在的后续章；须请作者裁决当前章取舍。
+- 首章没有上章钩子时可 N/A；任一模式都不能为钩子新造未授权事件。
+- 写作特工成功只输出 `NOVEL_TEXT_START...NOVEL_TEXT_END` 内的纯正文。
+  输入无效则输出 `BLOCKED`、code 与具体缺口，不能把阻断说明塞进 NOVEL_TEXT 标记伪装正文。
+- 反 AI 编辑的报告与 `HUMANIZED_TEXT_START...HUMANIZED_TEXT_END` 分离；总编辑剥去标记后
+  才写 stage 正文。说明、分析、工程标签泄漏到正文是 P0，但正常小说标点不自动等于说明。
 
 ## 执行流程
 
-每一步都标注了对应的脚本对接点。**机器闸口是底线，agent 是增量**：脚本任何时候都能跑，
-不依赖 agent 是否部署。
+1. 跑 `python scripts/resume.py "{book}"` 核对欠账/未完事务。修订可处理现有欠账，未清不能开新章。
+2. 读取必要来源并解决作者授权、改纲或设定调整；这些修改全部在 prepare 前完成。
+3. 策划主编形成完整 Brief 并通过预算门；总编辑准备本次工作目录（在 stage 和正式工程之外）。
+4. 创建现有章事务：
 
-1. **团队启动前确认无欠账**（铁律第 1 条）：
-   ```bash
-   python scripts/resume.py "{书}"
-   python scripts/check_text.py "正文/第0XX章.md" --verify-prev --current-chapter N
-   ```
-   `resume.py` 退出码 1（有欠账）时不启动团队，先补账。
+```bash
+python scripts/chapter_transaction.py prepare "{book}" --chapter {N}
+```
 
-2. **准备上下文**：读章纲 + 人物卡 + 近章摘要 + 伏笔台账 + 节奏配额。
-   需要定位历史细节时先查实体索引：
-   ```bash
-   python scripts/entity_index.py query "{书}" {实体名} --grep
-   ```
+使用输出的 stage_root 与 chapter_file，旧章沿用原文件名；不得另存一个同章标题文件。
+5. 调用写作特工，实际传入角色定义、完整 Brief、来源内容与场景渲染规则；BLOCKED 就停止派写。
+   候选正文只写 `{stage}/正文/{chapter_file}`，不得先改正式正文。
+6. 反 AI 编辑和连载核实官可并行读取同一候选稿，报告与改稿建议写在工作目录，不互相写 stage。
+   总编辑汇总后独自修改 stage，避免两个编辑覆盖彼此版本。
+7. 按 `references/workflow/chapter-loop.md` Step 5–7 执行机器诊断、真实自查与五表暂存。
+   stage 只人工改本章正文和五表；Beat、章意图、报告、额外设定不得写入 stage。
+   gate/index 由脚本生成；否则会触发 `stage_changed_outside_transaction`。
+8. 当前稿全部 blocking/P0 清零之后才提交：
 
-3. **生成 Chapter Brief**（策划主编）。
+```bash
+python scripts/chapter_transaction.py validate "{book}" --min-chars {下限} --max-chars {上限} --declare "{配额,事件类型,档位}"
+# 总编辑真实自查通过才能确认；不能用机器 passed 代替语义检查
+python scripts/chapter_transaction.py commit "{book}" --self-review-confirmed
+```
 
-4. **spawn 写作特工**（子代理，无上下文）→ 等待纯正文。
+validate 只核对追踪、机器正文/节奏门禁、索引与哈希，不读取或验证语义报告。
+声明以减号开头时用 `--declare=-,world_painting,中`；修改候选或五表后必须重新 validate。
+提交完成才报告该章完成；closed/finale 只报告闭合兑现，不制造下章预告。
+大修按 `references/workflow/revision.md` 逐章提交并冻结新章，跨章核对后才解冻。
 
-5. **标点归一化**（可选，润色前后均可跑，减少 anti-ai-editor 的无效命中）：
-   ```bash
-   python scripts/normalize_punct.py "正文/第N章_标题.md" --check   # 先看
-   python scripts/normalize_punct.py "正文/第N章_标题.md"           # 确认后改
-   ```
+## 修复上限与报告
 
-6. **并行审核**：
-   - 反AI编辑 7 Gate（可先跑机器版拿报告）：
-     ```bash
-     python scripts/check_text.py "正文/第N章.md" --gate-report \
-       --ledger "追踪/伏笔台账.md" --current-chapter N
-     ```
-   - 节奏配额检查（越界/冷却违规机器先报）：
-     ```bash
-     python scripts/rhythm_guard.py --chapter-file "正文/第N章.md" --quota "追踪/节奏配额.md"
-     ```
-   - 文风漂移检测（可选，anti-ai-editor 判断腔调是否漂移的量化依据）：
-     ```bash
-     python scripts/style_fingerprint.py compare "正文/第N章.md" "设定/文风锚.md"
-     ```
-   - 连载核实官一致性核查（语义层，机器查不到的伏笔回收细节对不上埋设细节等）。
+任何 blocking/P0 最多自动定向修两轮。第二轮仍失败 → `gate_blocked`，保留 checkpoint、
+pending draft 和问题证据，不再自动改、不 commit、不写下一章，交作者裁决。
+计数记录在工作目录并跨角色/模型/Beat/solo/新会话传递，重新 prepare 也不能重置；
+只有作者作出新的明确处置后才能按授权恢复，不能以“有条件通过”绕过未解决 P0。
 
-7. **总编辑汇总**：P0 → 返工（最多2次，见 `assets/agents/README.md` 防死循环协议）；无 P0 → 用润色版。
+报告逐条用 id、severity（P0/P1/P2）、category、evidence、why_it_matters、minimal_fix、
+confidence、source；实际格式与机器接口见 `references/craft/gate-artifacts-spec.md`。
+S1–S4 保留为一致性分类，不替代 severity。审核只复核受修复影响部分，不因不喜欢结论无限重审；
+稿件变了则旧报告不能直接沿用，最终自查必须对应当前候选稿。
 
-8. **更新追踪五文件**后，跑格式校验防止 agent 把格式写歪导致下游脚本静默漏检：
-   ```bash
-   python scripts/validate_tracking.py "{书}"
-   ```
-
-9. **重建实体索引**，让下一章的策划主编能查实体定位章节：
-   ```bash
-   python scripts/entity_index.py build "{书}"
-   ```
-
-10. **向作者报告**。
-
-## P0 检测触发器
-
-正文中出现以下任意内容，立即触发 P0 强制重写：
-- `[` `]` 括号包裹的说明文字
-- `（注：）`、`【写作说明】`、`TODO`、`作者按`
-- 写作 Agent 的推理过程或分析性段落出现在正文区
-
-## 异源审核集成
-
-编辑团队的「连载核实官」负责单章一致性，但审核视角单一。
-卷级/节点级评审应启用 `review-rubric.md` 的多视角盲评协议，与编辑团队形成互补：
-
-- 单章生产 → 编辑团队（4 角色串行/并行）
-- 卷级评审 → 多视角盲评（4 视角 × 异源审核协议）
-- 两者共享 P0 问题清单，连载核实官的 S1-S4 报告纳入盲评的「同行作者」视角输入
-
-## 正文隔离 P0 触发器
-
-写作特工输出的正文中，如果机器检测到以下 6 类标记之一，直接判定为 P0 并拒绝进入反 AI 编辑环节：
-
-1. `[说明]` 或 `[注释]` 或 `TODO`（大括号/方括号说明性文字）
-2. `CHAPTER_BRIEF` 或 `ANTIAI_CHECK_REPORT` 或 `CONSISTENCY_REPORT`（分区标记泄漏到正文）
-3. `本章目标` / `本章重点` / `大纲要求`（大纲语言混入正文）
-4. 连续 3 段以上每段都以「他/她」开头且句式雷同（AI 腔高概率信号）
-5. 正文总字数与章纲预算偏差 >20%（严重注水或严重缩水）
-6. 出现其他角色章节正文中不应出现的角色名（跨章串台）
-
-P0 触发后：写作特工重写该章，编辑团队其余角色不参与。连续 2 次 P0 则降级为「有条件通过」+ 人工介入。
+卷级或节点级跨视角审核按 `references/craft/review-rubric.md`；它不替代逐章事务，也不增加自动修复额度。

@@ -32,6 +32,11 @@
   需要写更多章时，开新一轮会话，重新跑 `resume.py` 确认状态。
 - **禁止并发**：多章必须串行，一章完整走完 `chapter-loop.md` 的 Step 0–8 后
   才开下一章。不得同时起草多章正文——并行写作会导致角色状态和伏笔台账冲突。
+- 一章的正文与五表必须经 prepare → stage → validate → commit 共同提交，不能用报告完成
+  或手动回写五表替代 commit。blocking/P0 两轮修复仍失败即 gate_blocked，停止本批；
+  切换团队、Beat、模型或新会话不重置额度，也不能降成 advisory。
+- 每章沿用完整章意图的 ending_mode。closed/finale 不强制下章钩子或预告；finale 到此结束
+  批次，不为凑满 2–3 章造后续章，也不把配额事件推给不存在的章节。
 
 ## 写前准备（每章写前都跑）
 
@@ -59,7 +64,7 @@ python scripts/rhythm_guard.py --quota "追踪/节奏配额.md" \
   把长线任务当短线跑（见 `outline_anchor.py` 的阶段定位逻辑）。
 - `rhythm_guard.py --declare`：写章前预检声明的档位和配额是否与历史记录冲突
   （A 冷却 2 章 / B 冷却 1 章 / C 冷却 3 章 / 事件冷却 / 连续快档）。预检 FAIL
-  时先改章纲的节奏声明，不要写了再改。
+  时在作者授权范围内先调整章纲的节奏声明，且在 chapter-loop Step 3B prepare 前完成。
 - 读取章纲：章纲是本章的第一约束，无章纲不写正文（Iron Law 第 2 条）。
 
 三条命令的输出与章纲一起压成本节速记（`chapter-loop.md` Step 3），再进入检索。
@@ -70,13 +75,13 @@ python scripts/rhythm_guard.py --quota "追踪/节奏配额.md" \
 ┌─ 第 1 章 ─────────────────────────────────────────────┐
 │  写前准备（inject + declare + 读章纲）                  │
 │  → chapter-loop.md Step 0–8（完整走一遍）              │
-│  → 本章追踪五文件更新 + validate_tracking + entity_index │
+│  → stage 五表 + 真实自查 + validate + commit             │
 └──────────────────────────────────────────────────────┘
                           ↓ 前一章完成且无欠账
 ┌─ 第 2 章 ─────────────────────────────────────────────┐
 │  写前准备（inject + declare + 读章纲）                  │
 │  → chapter-loop.md Step 0–8                            │
-│  → 本章追踪五文件更新 + validate_tracking + entity_index │
+│  → stage 五表 + 真实自查 + validate + commit             │
 └──────────────────────────────────────────────────────┘
                           ↓
 ┌─ 第 3 章（如需）──────────────────────────────────────┐
@@ -91,20 +96,15 @@ python scripts/rhythm_guard.py --quota "追踪/节奏配额.md" \
 - **Step 0**：欠账门（每章开写前查上一章门禁）。
 - **Step 1**：读章纲。
 - **写前准备**：inject + declare（本文件新增，插入在 Step 1 与 Step 2 之间）。
-- **Step 2–8**：检索 → 速记 → 写正文 → 机器闸口 → 自查清单 → 更新追踪 → 报告。
+- **Step 2–8**：检索 → 完整章意图/预算门 → prepare → stage 正文 → 机器闸口 →
+  真实自查 → stage 五表 → validate → commit → 报告。
 
-**串行纪律**：一章的 Step 8（向作者报告）完成且追踪文件更新后，才开下一章的
+**串行纪律**：一章 commit 成功且 Step 8（向作者报告）完成后，才开下一章的
 Step 0。中间不得交叉——不要在写第 2 章正文时回头改第 1 章的追踪文件。
 
-每章更新追踪五文件后立刻跑两条命令（与 `chapter-loop.md` Step 7 一致）：
-
-```bash
-# 追踪文件格式复核
-python scripts/validate_tracking.py "{书籍工程目录}"
-
-# 重建实体→章节索引
-python scripts/entity_index.py build "{书籍工程目录}"
-```
+每章必须使用 `chapter-loop.md` Step 7 的真实 validate/commit 命令；validate 内部对同一
+stage 校验五表、机器门禁与实体索引，不另行手工修改 canonical 表或 index。validate 不验证
+语义报告，主 Agent 仍须真实自查后才使用 --self-review-confirmed。工作报告留在工程外。
 
 ## 批次级检查
 
@@ -127,7 +127,7 @@ python scripts/outline_anchor.py advance "{书籍工程目录}" --chapter {N} --
 
 - `validate_tracking.py`：批次级复核五个追踪文件格式。每章写完虽已跑过一次，
   但多章连写后可能有交叉影响（摘要压缩、伏笔状态迁移），批末再跑一次兜底。
-  报告任何格式问题都要当场修。
+  报告格式问题时暂停新章，通过受影响章的修订事务处理，不直接改正式表。
 - `entity_index.py build`：批次级重建索引。每章虽已跑过，但批末重建一次确保
   索引与本批全部摘要同步，下一轮日更写前检索能用。
 - `outline_anchor.py advance`：把锚点指针推进到本批末章。不推进的话下一轮
@@ -139,19 +139,19 @@ python scripts/outline_anchor.py advance "{书籍工程目录}" --chapter {N} --
 与前一批对比，漂移超阈值则暂停日更排查。
 
 ```bash
-# 本批每章跑量化打分（AI 味分数 + 六维文风统计，落盘到门禁状态文件）
+# 本批每章只读量化诊断；已提交 gate 由各章事务生成，不在批末覆盖它
 python scripts/check_text.py "正文/第{N}章_标题.md" \
   --min-chars {下限} --max-chars {上限} \
   --ledger "追踪/伏笔台账.md" --current-chapter {N} \
-  --gate-report --gate-state
+  --gate-report
 
 python scripts/check_text.py "正文/第{N+1}章_标题.md" \
   --min-chars {下限} --max-chars {上限} \
   --ledger "追踪/伏笔台账.md" --current-chapter {N+1} \
-  --gate-report --gate-state
+  --gate-report
 ```
 
-`--gate-state` 会把 AI 味分数写入 `追踪/门禁/gate_ch{N}.json`。批末对比本批各章
+各章事务生成的 `追踪/门禁/gate_ch{N}.json` 已含 AI 味分数。批末对比本批各章
 的 AI 味分数与前一批同指标的均值：
 
 - **漂移 ≤ 15%**：正常，可继续下一轮日更。
@@ -160,7 +160,7 @@ python scripts/check_text.py "正文/第{N+1}章_标题.md" \
   2. 是否文风锚失效（跑 `style_fingerprint.py compare` 对照 `设定/文风锚.md`，
      六维指标哪一维漂了）。
   3. 是否对话声线趋同（Gate E，遮名字认人测试）。
-  4. 排查修复后重写漂移最严重的章节，再恢复日更。
+  4. 按 `revision.md` 的章事务修复漂移最严重的章节，验证与真实自查后共同提交，再恢复日更。
 
 漂移基线的建立：开书前 10 章的 AI 味分数均值作为基线。前一批 = 上一轮日更的
 各章 AI 味分数均值；首轮日更的「前一批」用开书基线。
@@ -183,8 +183,8 @@ Get-Item "追踪/章节摘要.md","追踪/角色状态.md","追踪/节奏配额.
 - 若 mtime 是新的但大小没变：可能模型覆写了相同内容（回写时没追加而是覆盖）。
   跑 `validate_tracking.py` 确认格式，再人工核对最近 3 章的摘要/状态/配额是否
   都在文件里。
-- 若 mtime 是旧的：模型根本没写。补回写最近 3 章的追踪文件，再跑
-  `entity_index.py build` 重建索引。
+- 若 mtime 是旧的：核实应有变化是否缺失；需要补表时用受影响章事务同步五表与索引，
+  不直接补写正式表。纯措辞修订或无状态变化不要求文件机械增长。
 
 单轮日更（2–3 章）在批末做一次中途快照即可；连续多轮日更时，每跨满 3 章做一次。
 

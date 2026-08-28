@@ -58,6 +58,15 @@ def _run_script(name, args, book_dir=None):
     except Exception as e:
         return {"success": False, "error": f"脚本执行异常: {e}"}
 
+def _context_manager_args(params):
+    """Adapt the public compact alias to the actual read-only compress CLI."""
+    if params.action == "select":
+        return ["select", params.book_dir, "--chapter", str(params.chapter), "--json"]
+    if params.action == "compact":
+        return ["compress", params.book_dir, "--from", "1", "--to", str(params.chapter)]
+    raise ValueError("unsupported context action")
+
+
 # 尝试导入mcp
 HAS_MCP = False
 try:
@@ -190,7 +199,7 @@ class ContextManagerInput(BaseModel):
     """上下文管理输入"""
     model_config = ConfigDict(str_strip_whitespace=True)
     
-    action: str = Field(..., description="操作: select/compact", pattern="^(select|compact)$")
+    action: str = Field(..., description="select: 本章上下文；compact: 返回第1章至当前章的压缩摘要，不写回", pattern="^(select|compact)$")
     chapter: int = Field(..., description="当前章节号", ge=1)
     book_dir: str = Field(..., description="书籍工程目录路径")
 
@@ -611,7 +620,7 @@ def create_mcp_server():
     async def novel_context_manager(params: ContextManagerInput) -> str:
         """最小上下文选取和压缩，解决百万字上下文爆炸问题。"""
         try:
-            args = [params.action, str(params.chapter), "--book-dir", params.book_dir]
+            args = _context_manager_args(params)
             
             return json.dumps(_run_script("context_manager", args), indent=2)
         except Exception as e:

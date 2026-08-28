@@ -17,36 +17,19 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: 提取版本号
-        id: version
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: 验证公开版本号一致
+        run: python scripts/version_sync.py --check
+
+      - name: 验证 Tag 与包版本一致
+        if: startsWith(github.ref, 'refs/tags/v')
         run: |
           TAG_VERSION=${GITHUB_REF#refs/tags/v}
-          echo "tag_version=$TAG_VERSION" >> $GITHUB_OUTPUT
-          echo "Tag 版本: $TAG_VERSION"
-
-      - name: 验证 SKILL.md 版本
-        run: |
-          SKILL_VERSION=$(grep 'version:' SKILL.md | head -n 1 | sed 's/.*version: *//' | tr -d ' ')
-          echo "SKILL.md 版本: $SKILL_VERSION"
-          if [ "$SKILL_VERSION" != "${{ steps.version.outputs.tag_version }}" ]; then
-            echo "✗ 版本号不一致: Tag=${{ steps.version.outputs.tag_version }}, SKILL.md=$SKILL_VERSION"
-            exit 1
-          fi
-          echo "✓ SKILL.md 版本号一致"
-
-      - name: 验证 skill.json 版本
-        run: |
-          if [ -f skill.json ]; then
-            JSON_VERSION=$(python -c "import json; d=json.load(open('skill.json')); print(d.get('version',''))")
-            echo "skill.json 版本: $JSON_VERSION"
-            if [ -n "$JSON_VERSION" ] && [ "$JSON_VERSION" != "${{ steps.version.outputs.tag_version }}" ]; then
-              echo "✗ skill.json 版本号不一致"
-              exit 1
-            fi
-            echo "✓ skill.json 版本一致"
-          else
-            echo "⊘ skill.json 不存在，跳过"
-          fi
+          PACKAGE_VERSION=$(python -c "from scripts.config import SKILL_VERSION; print(SKILL_VERSION)")
+          test "$TAG_VERSION" = "$PACKAGE_VERSION"
 
   # 运行完整测试套件
   full-test:
@@ -61,8 +44,17 @@ jobs:
           python-version: '3.10'
 
       - name: 运行完整测试套件
-        run: |
-          python scripts/tests/run_tests.py
+        run: python scripts/tests/run_tests.py
+
+      - name: 验证 Skill 契约
+        env:
+          PYTHONUTF8: "1"
+        run: python scripts/skill_contract.py .
+
+      - name: 验证公开版本号一致
+        env:
+          PYTHONUTF8: "1"
+        run: python scripts/version_sync.py --check
 
   # 创建发布
   create-release:
@@ -77,8 +69,8 @@ jobs:
       - name: 生成变更日志
         id: changelog
         run: |
-          # 从 SKILL.md 中提取最新版本的变更日志
-          echo "changes=请查看 SKILL.md 中的更新日志" >> $GITHUB_OUTPUT
+          # 发布说明指向此 tag 的真实版本记录，入口不承担更新日志职责。
+          echo "changes=请查看 [CHANGELOG.md 对应版本](https://github.com/${{ github.repository }}/blob/${{ github.ref_name }}/CHANGELOG.md)。" >> $GITHUB_OUTPUT
 
       - name: 创建 Release
         uses: softprops/action-gh-release@v2

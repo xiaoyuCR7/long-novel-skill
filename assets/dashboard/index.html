@@ -131,6 +131,23 @@ tr:last-child td{border-bottom:none}
 .preview-area li{margin:4px 0}
 .preview-area blockquote{border-left:3px solid #e94560;padding-left:16px;color:#a4a4b4;margin:12px 0}
 
+/* ===== 安全编辑器 ===== */
+.editor-toolbar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px}
+.editor-toolbar button{border:1px solid #3f3f5f;border-radius:7px;padding:8px 14px;cursor:pointer;color:#fff;background:#263657}
+.editor-toolbar button:hover:not(:disabled){border-color:#e94560}
+.editor-toolbar button:disabled{cursor:not-allowed;opacity:.45}
+.editor-toolbar .danger{background:#5b2028;border-color:#7f1d1d}
+.editor-state{font-size:.82rem;color:#8d93a8;margin-left:auto}
+.editor-state.dirty{color:#fbbf24;font-weight:600}
+#file-editor{width:100%;min-height:360px;resize:vertical;border:1px solid #343454;border-radius:8px;background:#0b0b15;color:#ececf1;padding:14px;font:14px/1.75 ui-monospace,Consolas,monospace;tab-size:2}
+#file-editor:focus{outline:2px solid #e94560;outline-offset:1px}
+#file-editor:disabled{color:#6b7280;cursor:not-allowed}
+.editor-banner{border-radius:7px;padding:10px 12px;margin-bottom:10px;font-size:.86rem}
+.editor-banner[hidden]{display:none}
+.editor-banner.conflict{background:#78350f;color:#fde68a;border:1px solid #b45309}
+.editor-banner.message{background:#172554;color:#bfdbfe;border:1px solid #1d4ed8}
+.editor-help{font-size:.78rem;color:#777b90;margin-top:8px}
+
 /* ===== 图表容器 ===== */
 .chart-container{width:100%;height:300px;position:relative}
 .chart-container canvas{width:100%!important;height:100%!important}
@@ -255,8 +272,20 @@ tr:last-child td{border-bottom:none}
         <div class="file-tree" id="file-tree"><div class="loading">加载中...</div></div>
       </div>
       <div class="card">
-        <h2>📄 文件预览 <span id="file-preview-name" style="font-size:0.8rem;color:#888;font-weight:normal"></span></h2>
-        <div class="preview-area" id="file-preview"><div class="empty">点击左侧文件查看内容</div></div>
+        <h2>📝 文件编辑 <span id="file-preview-name" style="font-size:0.8rem;color:#888;font-weight:normal"></span></h2>
+        <div id="conflict-banner" class="editor-banner conflict" role="alert" hidden></div>
+        <div id="editor-message" class="editor-banner message" role="status" hidden></div>
+        <div class="editor-toolbar">
+          <button id="save-file" type="button" disabled>保存</button>
+          <button id="delete-file" class="danger" type="button" disabled>移入回收区</button>
+          <span id="file-dirty" class="editor-state" aria-live="polite">未打开文件</span>
+        </div>
+        <textarea id="file-editor" aria-label="文件内容编辑器" spellcheck="false" disabled placeholder="点击左侧可编辑文本文件"></textarea>
+        <div class="editor-help">保存采用 revision 冲突检查；冲突或 API 失败不会清空当前编辑缓冲区。</div>
+        <details style="margin-top:14px">
+          <summary>格式化预览</summary>
+          <div class="preview-area" id="file-preview"><div class="empty">点击左侧文件查看内容</div></div>
+        </details>
       </div>
     </div>
   </div>
@@ -470,6 +499,62 @@ async function loadForeshadow(){
 // 文件树
 // =============================================================================
 let fileTreeData=null;
+let openFile={path:'',revision:'',content:'',dirty:false};
+let previewGeneration=0;
+let editorVersion=0;
+let mutationPending=false;
+let sessionToken='';
+
+async function mutationHeaders(){
+  if(!sessionToken)sessionToken=(await api('/api/session')).token;
+  return {'Content-Type':'application/json','X-Dashboard-Token':sessionToken};
+}
+
+function escapeHtml(value){
+  return String(value).replace(/[&<>"']/g,char=>({
+    '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
+  })[char]);
+}
+
+function keepEditorBuffer(){
+  return document.getElementById('file-editor').value;
+}
+
+function setEditorDirty(){
+  const editor=document.getElementById('file-editor');
+  openFile.dirty=Boolean(openFile.path)&&editor.value!==openFile.content;
+  const marker=document.getElementById('file-dirty');
+  marker.textContent=openFile.path?(openFile.dirty?'有未保存修改':'已保存'):'未打开文件';
+  marker.classList.toggle('dirty',openFile.dirty);
+}
+
+function hideEditorNotices(){
+  document.getElementById('conflict-banner').hidden=true;
+  document.getElementById('editor-message').hidden=true;
+}
+
+function showConflict(payload){
+  const banner=document.getElementById('conflict-banner');
+  banner.textContent=(payload&&payload.error)||'文件已被外部修改。当前缓冲区已保留，请复制内容后重新打开文件。';
+  banner.hidden=false;
+  document.getElementById('editor-message').hidden=true;
+  keepEditorBuffer();
+}
+
+function showError(payload){
+  const banner=document.getElementById('editor-message');
+  banner.textContent=(payload&&payload.error)||'操作失败，当前编辑缓冲区已保留。';
+  banner.hidden=false;
+  document.getElementById('conflict-banner').hidden=true;
+  keepEditorBuffer();
+}
+
+function showMessage(message){
+  const banner=document.getElementById('editor-message');
+  banner.textContent=message;
+  banner.hidden=false;
+  document.getElementById('conflict-banner').hidden=true;
+}
 async function loadFileTree(){
   if(fileTreeData)return renderFileTree();
   try{
@@ -484,14 +569,15 @@ function renderFileTree(){
 
 function renderTreeNode(items,isRoot=false){
   return `<ul class="${isRoot?'':'children open'}">${items.map(item=>{
-    const ext=item.name.split('.').pop().toLowerCase();
+    const ext=item.name.split('.').pop().toLowerCase().replace(/[^a-z0-9_-]/g,'');
     if(item.type==='dir'){
       return `<li class="folder open" onclick="event.stopPropagation();toggleFolder(this)">
-        <span>${item.name}</span>
+        <span>${escapeHtml(item.name)}</span>
         ${item.children?renderTreeNode(item.children):''}
       </li>`;
     }else{
-      return `<li class="file ${ext}" onclick="event.stopPropagation();previewFile('${item.path}')">${item.name}</li>`;
+      const encodedPath=encodeURIComponent(item.path);
+      return `<li class="file ${ext}" data-path="${encodedPath}" onclick="event.stopPropagation();previewFile(decodeURIComponent(this.dataset.path))">${escapeHtml(item.name)}</li>`;
     }
   }).join('')}</ul>`;
 }
@@ -503,14 +589,31 @@ function toggleFolder(el){
 }
 
 async function previewFile(relPath){
+  if(openFile.dirty&&!confirm(`“${openFile.path}”有未保存修改。确定放弃并打开“${relPath}”吗？`))return;
+  const generation=++previewGeneration;
+  const source=openFile, version=editorVersion;
   try{
-    document.getElementById('file-preview-name').textContent=relPath;
-    const data=await api('/api/file?path='+encodeURIComponent(relPath));
-    if(data.error){
-      document.getElementById('file-preview').innerHTML=`<div class="empty">${data.error}</div>`;return;
-    }
-    let html=data.content;
-    if(data.ext==='.md'){
+    const res=await fetch('/api/file?path='+encodeURIComponent(relPath));
+    const data=await res.json();
+    if(generation!==previewGeneration||openFile!==source)return;
+    if(version!==editorVersion){showMessage('加载期间有新输入，已取消切换并保留当前内容。');return}
+    if(!res.ok){showError(data);return}
+    openFile={path:data.path,revision:data.revision,content:data.content,dirty:false};
+    document.getElementById('file-preview-name').textContent=data.path;
+    const editor=document.getElementById('file-editor');
+    editor.disabled=false;
+    editor.value=data.content;
+    document.getElementById('save-file').disabled=false;
+    document.getElementById('delete-file').disabled=false;
+    hideEditorNotices();
+    setEditorDirty();
+    renderFilePreview(data.content,data.extension);
+  }catch(e){if(generation===previewGeneration&&openFile===source)showError({error:'加载失败：'+e.message})}
+}
+
+function renderFilePreview(content,extension){
+    let html=escapeHtml(content);
+    if(extension==='.md'){
       html=html.replace(/^### (.+)$/gm,'<h3>$1</h3>')
                .replace(/^## (.+)$/gm,'<h2>$1</h2>')
                .replace(/^# (.+)$/gm,'<h1>$1</h1>')
@@ -520,15 +623,87 @@ async function previewFile(relPath){
                .replace(/\n\n/g,'</p><p>')
                .replace(/\n/g,'<br>');
       html='<p>'+html+'</p>';
-    }else if(data.ext==='.json'){
-      try{html='<pre>'+JSON.stringify(JSON.parse(data.content),null,2)+'</pre>'}
-      catch(e){html='<pre>'+data.content+'</pre>'}
+    }else if(extension==='.json'){
+      try{html='<pre>'+escapeHtml(JSON.stringify(JSON.parse(content),null,2))+'</pre>'}
+      catch(e){html='<pre>'+html+'</pre>'}
     }else{
-      html='<pre>'+data.content+'</pre>';
+      html='<pre>'+html+'</pre>';
     }
     document.getElementById('file-preview').innerHTML=html;
-  }catch(e){document.getElementById('file-preview').innerHTML=`<div class="empty">加载失败:${e.message}</div>`}
 }
+
+async function saveOpenFile(){
+  if(!openFile.path||mutationPending)return;
+  const source=openFile;
+  const buffer=keepEditorBuffer();
+  mutationPending=true;
+  hideEditorNotices();
+  try{
+    const res=await fetch('/api/file',{
+      method:'POST',headers:await mutationHeaders(),
+      body:JSON.stringify({path:source.path,content:buffer,revision:source.revision})
+    });
+    const payload=await res.json();
+    if(openFile!==source)return;
+    if(res.status===409){showConflict(payload);return}
+    if(!res.ok){showError(payload);return}
+    openFile.revision=payload.revision;
+    openFile.content=buffer;
+    openFile.dirty=false;
+    setEditorDirty();
+    renderFilePreview(buffer,payload.extension);
+    showMessage(payload.backup?`已保存；旧版本备份：${payload.backup}`:'新文件已安全保存。');
+  }catch(e){if(openFile===source)showError({error:'保存失败：'+e.message})}
+  finally{mutationPending=false}
+}
+
+async function deleteOpenFile(){
+  if(!openFile.path||mutationPending)return;
+  const source=openFile, version=editorVersion;
+  const exactPath=openFile.path;
+  if(!confirm(`确定删除“${exactPath}”吗？文件会移入追踪/.dashboard-trash/，不会永久删除。`))return;
+  mutationPending=true;
+  try{
+    const res=await fetch('/api/file',{
+      method:'DELETE',headers:await mutationHeaders(),
+      body:JSON.stringify({path:exactPath,revision:source.revision})
+    });
+    const payload=await res.json();
+    if(openFile!==source){if(res.ok)fileTreeData=null;return}
+    if(res.status===409){showConflict(payload);return}
+    if(!res.ok){showError(payload);return}
+    ++previewGeneration;
+    if(editorVersion!==version){
+      // The disk file is gone, but newer typing remains an unsaved, recreatable document.
+      openFile.revision='e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855';
+      openFile.content='';
+      setEditorDirty();
+      showMessage(`原文件已移入回收区：${payload.trash_path}；期间的新输入已保留，可保存重建文件。`);
+      fileTreeData=null;
+      return;
+    }
+    openFile={path:'',revision:'',content:'',dirty:false};
+    const editor=document.getElementById('file-editor');
+    editor.value='';editor.disabled=true;
+    document.getElementById('save-file').disabled=true;
+    document.getElementById('delete-file').disabled=true;
+    document.getElementById('file-preview-name').textContent='';
+    document.getElementById('file-preview').innerHTML='<div class="empty">文件已移入回收区</div>';
+    setEditorDirty();
+    showMessage(`已移入回收区：${payload.trash_path}`);
+    fileTreeData=null;
+    await loadFileTree();
+  }catch(e){
+    if(openFile===source)showError({error:'删除失败：'+e.message});
+  }finally{mutationPending=false}
+}
+
+document.getElementById('file-editor').addEventListener('input',()=>{++editorVersion;setEditorDirty()});
+document.getElementById('save-file').addEventListener('click',saveOpenFile);
+document.getElementById('delete-file').addEventListener('click',deleteOpenFile);
+window.addEventListener('beforeunload',event=>{
+  if(openFile.dirty){event.preventDefault();event.returnValue=''}
+});
 
 // =============================================================================
 // 初始化

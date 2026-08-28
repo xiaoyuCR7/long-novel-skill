@@ -103,6 +103,40 @@ class TestScanAIPatterns(unittest.TestCase):
         self.assertGreaterEqual(len(ai_hits), len(clean_hits),
                                 "AI味重的文本命中数应 >= 干净文本")
 
+    def test_low_connective_narration_detected(self):
+        text = "门开。风停。灯灭。脚步近。刀出鞘。血落地。人倒下。"
+
+        hits = scan_ai_patterns(text)
+
+        self.assertTrue(
+            any(h[0] == "ai-low-connective-density" for h in hits),
+            "应识别缺少指代、因果和句群连接的提纲式叙述",
+        )
+
+    def test_dialogue_barrage_not_low_connective_narration(self):
+        text = "「走！」\n「不走。」\n「来不及了！」\n「那就一起留下。」"
+
+        hits = scan_ai_patterns(text)
+
+        self.assertFalse(
+            any(h[0] == "ai-low-connective-density" for h in hits),
+            "对白短句不应被当作低连接密度叙述",
+        )
+
+    def test_short_peak_inside_natural_narration_is_allowed(self):
+        text = (
+            "他沿着结冰的河岸往前走，靴底每次落下都带起一层白霜。"
+            "身后忽然响了一声。很轻。却让他停住了。"
+            "等他转身时，芦苇已经重新合拢，水面只剩一圈慢慢散开的纹路。"
+        )
+
+        hits = scan_ai_patterns(text)
+
+        self.assertFalse(
+            any(h[0] == "ai-low-connective-density" for h in hits),
+            "自然叙述中的局部短促高潮应保留",
+        )
+
 
 class TestScanParagraphRepetition(unittest.TestCase):
     """测试跨段落重复度检测。"""

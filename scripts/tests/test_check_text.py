@@ -233,5 +233,14 @@ class TestSkipMarkerAndChapterNumber(unittest.TestCase):
         self.assertIsNone(extract_chapter_number("readme.md"))
 
 
+class TestR5ClosingQuote(unittest.TestCase):
+    def test_complete_chinese_quoted_ending_is_not_truncated(self):
+        from check_text import scan_structure
+        for text in ("他说：“这一栏，现在可以验了。”", "她答：‘可以了。’"):
+            with self.subTest(text=text):
+                self.assertFalse(any(hit[0] == "truncation" for hit in scan_structure(text)))
+        self.assertTrue(any(hit[0] == "truncation" for hit in scan_structure("他抬手，正要")))
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

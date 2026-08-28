@@ -264,17 +264,17 @@ Pass 2 的改动量通常大于 Pass 1，因为改写比删除动的字更多。
 
 ```bash
 # 0. 写完正文后先跑机器闸口
-python scripts/check_text.py "正文/第037章_标题.md" --min-chars 2000 --max-chars 3500 \
-  --ledger "追踪/伏笔台账.md" --current-chapter 37 --gate-report --gate-state
+python scripts/check_text.py "{stage}/正文/第037章_标题.md" --min-chars 2000 --max-chars 3500 \
+  --ledger "{stage}/追踪/伏笔台账.md" --current-chapter 37 --gate-report --gate-state
 
 # 1. 读取报告，确定等级（轻/中/重），匹配遍数
 # 2. 按三遍法执行人工润色（Gate C-G）
 # 3. 润色后重跑验证
-python scripts/check_text.py "正文/第037章_标题.md" --gate-report
+python scripts/check_text.py "{stage}/正文/第037章_标题.md" --gate-report
 # 4. 确认 blocking=0；若 advisory 仍多，进第2轮
 # 5. 满足收敛条件后，输出字数协议
 # 6. 更新门禁状态
-python scripts/check_text.py "正文/第037章_标题.md" --gate-report --gate-state
+python scripts/check_text.py "{stage}/正文/第037章_标题.md" --gate-report --gate-state
 ```
 
 ### advisory 的处理原则
@@ -292,7 +292,7 @@ python scripts/check_text.py "正文/第037章_标题.md" --gate-report --gate-s
 ## 两遍式去AI味工作流
 
 前文的「三遍法」是面向重度章节的深度流程（去泛化→去书面化→回自然感）。本节定义一个
-更轻量的「两遍式」工作流，借鉴 `novel-creator-skill` 的 `humanizer-guide.md` 与
+更轻量的「两遍式」工作流，借鉴 `novel-creator-skill` 的 外部 humanizer-guide.md 与
 `oh-story-claudecode` 的 `story-deslop` 思路：第一遍按 7 类 AI 模式逐项清除，第二遍
 让 AI 对自己的修改稿做自审复查。两遍式适合轻度/中度章节的常规润色，重度章节仍走三遍法。
 
@@ -464,7 +464,7 @@ AI 偏爱这种工整的排比，但连用三次以上就成了机械感。
 ### 第二遍：AI 自审
 
 第二遍是「自问自答式复查」——把第一遍改完的稿子当成别人的稿子，问自己「哪里还有
-AI 感」，强制列出 3-5 条，再逐条修改。这一遍借鉴 `humanizer-guide.md` 的「AI 自审」
+AI 感」，强制列出 3-5 条，再逐条修改。这一遍借鉴 外部 humanizer-guide.md 的「AI 自审」
 机制：AI 改 AI 的稿，最大的盲区是「不知道自己哪里还像 AI」，因此必须强制列条目，
 逼自己跳出第一遍的惯性。
 
@@ -822,9 +822,9 @@ AI 味（升华/预告）：
 | 能力 | 由谁负责 | 说明 |
 |---|---|---|
 | 命中检测（7 类 AI 模式） | `check_text.py --gate-report` | 机器检测，输出命中位置与类别 |
-| 候选改法建议 | `check_text.py --deslop` | 机器给出候选改法（删/换），供人工或 Agent 采纳 |
-| 终稿改法判定 | 人工/反AI编辑 Agent | 机器只给候选，终稿由人工/Agent 定 |
-| 删除比例计算 | `check_text.py` 的 `count_chars` | 机器计算原文字数与删改量 |
+| 量化诊断与建议 | `check_text.py --deslop` | 机器输出指标、分级和建议，不生成逐条删/换候选 |
+| 候选与终稿改法判定 | 人工/反AI编辑 Agent | 依据原文和诊断提出最小改法，逐条核对事实与反应功能 |
+| 删除比例核对 | 人工/Agent 对比两稿的 `count_chars` 结果 | 脚本统计单稿字数，删改量需比较原稿与候选稿 |
 | 伏笔/因果锚点检查 | 人工/反AI编辑 + memory-keeper | 机器不判伏笔，须交叉校验台账 |
 | 收敛验证 | `check_text.py --gate-report` | 每轮润色后重跑确认 blocking 清零 |
 
@@ -838,130 +838,73 @@ check_text.py --gate-report          ← 检测，输出命中 + 分级
         │
         ▼
 第一遍：人工/Agent 按 7 类清单清除
-        │  （可调用 check_text.py --deslop 获取候选改法）
+        │  （可调用 check_text.py --deslop 获取量化诊断）
         ▼
 check_text.py --gate-report          ← 验证第一遍，确认 blocking=0
         │
         ▼
-第二遍：AI 自审，列 3-5 条，逐条改
-        │  （可调用 check_text.py --deslop 对自审发现的新命中取候选）
+第二遍：AI 自审，只列实际问题，逐条改
+        │  （可调用 check_text.py --deslop 辅助诊断，由编辑提出改法）
         ▼
 check_text.py --gate-report          ← 验证第二遍，确认无新增 blocking
         │
         ▼
-check_text.py --deslop --final-check ← 终检：输出残留 advisory 与 [需复核] 建议
+check_text.py --deslop --gate-report ← 终检：输出机器指标与残留 advisory
         │
         ▼
-输出字数协议 + [需复核] 清单 + 更新门禁状态
+编辑输出字数协议与 [需复核] 清单；机器 --gate-state 更新门禁状态
 ```
 
-### --deslop 模式的输入与输出
+### --deslop 模式的输入与输出（当前实现）
 
-**输入**：
-- 正文文件路径
-- `设定/禁用词.txt`（AI 高频词表）
-- `.deslop-whitelist`（白名单）
-- `--gate-report` 产出的 `check_ch{N}.json`（命中位置，避免重复检测）
+输入为候选正文文件，以及实际可用的词表和白名单。脚本重新扫描正文，
+不读取 `check_ch{N}.json`；该文件也不会由 `--gate-report` 自动生成。
 
-**输出**（`--deslop` 模式）：
-- 候选改法清单：每条命中给出「删除 / 替换」候选，标注置信度
-- 删改量预估：按候选改法执行后的预估删改字符数
-- 残留标记：机器无法给出候选改法的命中（如语境依赖强的改写），标 `[需人工]`
+`--deslop` 实际输出六级量化诊断、分级和建议到标准输出，不输出自动改写候选 JSON、
+置信度或自动 apply 操作。具体替换、删除与删改比例由编辑 Agent 根据原文判断，
+不把统计分数当成能删掉人物反应、态度或关系转折的依据。
 
-```json
-{
-  "chapter": 37,
-  "candidates": [
-    {
-      "line": 42,
-      "pattern": "ai_high_freq",
-      "original": "仿佛",
-      "action": "delete",
-      "confidence": 0.95,
-      "reason": "感知模糊词，删除不影响理解"
-    },
-    {
-      "line": 78,
-      "pattern": "meaning_inflation",
-      "original": "一种难以言喻的孤独感涌上心头",
-      "action": "replace",
-      "candidate": "他一个人坐到天亮",
-      "confidence": 0.6,
-      "reason": "意义膨胀，候选为具体动作；但需确认是否丢失情绪铺垫"
-    }
-  ],
-  "need_human": [
-    {
-      "line": 105,
-      "pattern": "generic_conclusion",
-      "original": "这一刻他终于明白了",
-      "reason": "位于高潮段，改写风险大，需人工定夺"
-    }
-  ],
-  "estimated_delete_chars": 187,
-  "estimated_delete_ratio": 0.066,
-  "tier": "轻"
-}
-```
-
-### 集成的三条原则
-
-1. **机器给候选，人工定终稿**：`--deslop` 的候选改法置信度 < 0.8 的一律不自动 apply，
-   须人工/Agent 确认。置信度 ≥ 0.95 的纯删除类（如「仿佛」「似乎」）可自动 apply，
-   但须记录在润色报告中备查。
-
-2. **删改量预估前置**：`--deslop` 在给出候选前先估算删改量与删除比例，若预估已超
-   上限 × 80%（橙灯），则只输出最毒的若干候选，其余标 `[需人工]`，避免引导 Agent
-   超限删除。
-
-3. **--deslop 不替代自审**：`--deslop` 是第一遍的辅助（给候选改法），不替代第二遍的
-   AI 自审。第二遍自审是「跳出机器视角的人脑/AI 复查」，`--deslop` 无法替代这种
-   整体性判断。两遍式的核心价值正在于第二遍的自审，不可省略。
-
-### --deslop 与既有门禁的衔接
-
-`--deslop` 模式不产出独立的门禁产物——它的候选改法是过程数据，采纳后体现在改后正文
-与 `--gate-report` 的重新验证中。具体衔接：
-
-- `--deslop` 读取 `check_ch{N}.json` 的命中作为输入（不重复检测）。
-- 候选采纳后，正文被修改，须重跑 `--gate-report` 更新 `gate_ch{N}.json` 的
-  `text_check` 段与 `deslop_score`。
-- `--deslop` 的 `need_human` 项与两遍式的 `[需复核]` 项合并，统一进入润色报告的
-  `[需复核]` 清单。
-- `--deslop --final-check`（终检）输出的残留 advisory，作为收敛判定的依据——
-  残留 < 10 处则通过，≥ 10 处则标 `[需复核]`。
+1. 只在 stage 改候选正文，真实保留每次检查输出；工作报告放在 stage 外。
+2. 改后重新扫描全文。要刷新机器 gate 必须使用 `--gate-state`，
+   不能只运行 `--gate-report` 然后声称门禁状态已更新。
+3. 正文机器 gate 使用顶层 `passed/blocking/advisory/ai_score/categories`；
+   没有 `text_check` 或 `deslop_score` 子字段。准确接口见
+   `references/craft/gate-artifacts-spec.md`。
+4. 机器诊断不替代语义自审；疑似问题标需复核，保留证据。只修命中问题，
+   单章累计最多两轮自动修复；仍有 blocking/P0 则阻断，不以建议数量强制放行。
+5. 候选通过后按 `references/workflow/chapter-loop.md` 重新 validate，
+   完成追踪与语义复核才 commit；字数协议和修订说明不能写进纯正文。
 
 ### 标准命令序列（两遍式 + --deslop）
 
 ```bash
 # 0. 门禁检测，输出命中与分级
-python scripts/check_text.py "正文/第037章_标题.md" --min-chars 2000 --max-chars 3500 \
-  --ledger "追踪/伏笔台账.md" --current-chapter 37 --gate-report --gate-state
+python scripts/check_text.py "{stage}/正文/第037章_标题.md" --min-chars 2000 --max-chars 3500 \
+  --ledger "{stage}/追踪/伏笔台账.md" --current-chapter 37 --gate-report --gate-state
 
-# 1. 读取 check_ch37.json，确定 deslop_grade → 选择两遍式（轻/中）
+# 1. 阅读标准输出的分级和命中 → 按任务选择实际需要的润色
 
-# 2. 第一遍：获取候选改法
-python scripts/check_text.py "正文/第037章_标题.md" --deslop
-# → 人工/Agent 按候选 + 7 类清单清除，apply 到正文
+# 2. 第一遍：获取量化诊断，由人工/Agent提出有证据的最小改法
+python scripts/check_text.py "{stage}/正文/第037章_标题.md" --deslop
+# → 仅修改 stage 中的候选正文，保留必要的反应和关系变化
 
 # 3. 第一遍验证
-python scripts/check_text.py "正文/第037章_标题.md" --gate-report
+python scripts/check_text.py "{stage}/正文/第037章_标题.md" --gate-report
 # → 确认 blocking=0；若未清零，补改
 
-# 4. 第二遍：AI 自审（列 3-5 条，逐条改）
-# → 可对自审新发现调用 --deslop 取候选
+# 4. 第二遍：AI 自审，只列实际问题，不为凑条数造问题
+# → 可调用 --deslop 辅助诊断，不产生自动改写候选
 
 # 5. 第二遍验证
-python scripts/check_text.py "正文/第037章_标题.md" --gate-report
+python scripts/check_text.py "{stage}/正文/第037章_标题.md" --gate-report
 # → 确认无新增 blocking
 
 # 6. 终检：残留 advisory 与 [需复核] 建议
-python scripts/check_text.py "正文/第037章_标题.md" --deslop --final-check
+python scripts/check_text.py "{stage}/正文/第037章_标题.md" --deslop --gate-report
 
 # 7. 输出字数协议 + [需复核] 清单，更新门禁状态
-python scripts/check_text.py "正文/第037章_标题.md" --gate-report --gate-state
+python scripts/check_text.py "{stage}/正文/第037章_标题.md" --gate-report --gate-state
 ```
 
-> **注**：`--deslop` 与 `--final-check` 为本文件约定的扩展模式，若 `check_text.py`
-> 当前版本未实现，可由 Agent 按 `--gate-report` 的命中手动执行第一遍清除、按
-> `--style-stats` 的统计辅助第二遍自审，流程不变，仅候选改法由人工/AI 自行生成。
+> **注**：以上仍是诊断步骤，提交前须执行章事务 validate/commit。脚本不可用时
+> 可以人工审稿并保留草稿，但必须报告 tool_unavailable，不能声称机器门禁已执行或安全提交成功。

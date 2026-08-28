@@ -481,7 +481,8 @@ python scripts/outline_anchor.py check "{书名目录}" --chapter {N} --quota {A
 ### 章节指针推进（chapter-loop 追踪更新时）
 
 ```bash
-python scripts/outline_anchor.py advance "{书名目录}" --chapter {N} [--volume-end]
+python scripts/outline_anchor.py advance "{书名目录}" --chapter {N}
+# 仅当本卷真实完结时追加 --volume-end
 ```
 
 每章写完、追踪五文件更新后调用，推进 `current_chapter` 与 `progress_pct`。
@@ -490,7 +491,7 @@ python scripts/outline_anchor.py advance "{书名目录}" --chapter {N} [--volum
 ### 状态总览（会话恢复或复盘时）
 
 ```bash
-python scripts/outline_anchor.py status "{书名目录}" [--json]
+python scripts/outline_anchor.py status "{书名目录}" --json
 ```
 
 显示全书进度、当前卷、各卷的完结状态与 `must_achieve`/`must_not_reveal` 清单。

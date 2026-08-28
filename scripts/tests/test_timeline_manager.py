@@ -65,6 +65,80 @@ class TestParse(unittest.TestCase):
         self.assertIn("A2", anchors)
 
 
+class TestTrackingAnchorCompatibility(unittest.TestCase):
+    def validate(self, text):
+        from validate_tracking import validate_timeline
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "timeline.md"
+            path.write_text(text, encoding="utf-8")
+            return validate_timeline(path)
+
+    def test_native_template_anchors_and_chapter_table_share_a_valid_file(self):
+        template = Path(__file__).resolve().parents[2] / "assets/templates/timeline.md"
+        text = template.read_text(encoding="utf-8").replace("{N}", "1")
+        self.assertEqual(self.validate(text), [])
+        anchors = parse_anchors(text)
+        self.assertEqual(anchors["A1"]["time_expr"], "穿越后第1天")
+        self.assertEqual(anchors["A2"]["time_expr"], "9月1日")
+
+    def test_valid_anchor_section_does_not_hide_invalid_chapter_rows(self):
+        for row in ("| 第3章 | 当天 | 缺少时间标记列 |", "| 没有章号 | 当天 | 事件 | 当日 |"):
+            with self.subTest(row=row):
+                text = "## 时间锚点\n| A1 | 起点 | 第1天 |\n## 第1卷\n" + row
+                issues = self.validate(text)
+                self.assertEqual(len(issues), 1, issues)
+
+    def test_invalid_anchor_is_not_accepted_as_chapter_or_ignored(self):
+        for row in (
+            "| A1 | 起点 | |", "| A1 | | 第1天 |", "| | 起点 | 第1天 |",
+            "| Q1 | 起点 | 第1天 |", "| A1 | 起点 | 第1天 | 多余列 |",
+            "Q1: 第1天", "A1: ", "A1 起点 = 第1天", "- A1: 第1天",
+        ):
+            with self.subTest(row=row):
+                self.assertTrue(self.validate("## 时间锚点\n" + row), row)
+
+    def test_native_anchor_text_and_heading_levels(self):
+        for heading in ("# 时间锚点", "##时间锚点", "### 时间锚点（基准）"):
+            for row in ("A1 | 起点 | 第1天", "A1: 第1天", "A1：第1天", "A1 = 第1天 # 起点"):
+                with self.subTest(heading=heading, row=row):
+                    text = heading + "\n" + row
+                    self.assertIn("A1", parse_anchors(text))
+                    self.assertEqual(self.validate(text), [])
+
+    def test_native_anchor_block_boundaries_are_preserved(self):
+        for heading in ("# 第1卷", "## 第1卷", "### 第1卷"):
+            with self.subTest(heading=heading):
+                text = "## 时间锚点\n| A1 | 起点 | 第1天 |\n" + heading + "\n| 第3章 | 当天 | 事件 |"
+                self.assertEqual(len(self.validate(text)), 1)
+        nested = "## 时间锚点\n#### 补充\n| A1 | 起点 | 第1天 |"
+        self.assertIn("A1", parse_anchors(nested))
+        self.assertEqual(self.validate(nested), [])
+        unsupported = "#### 时间锚点\n| A1 | 起点 | 第1天 |"
+        self.assertEqual(parse_anchors(unsupported), {})
+        self.assertTrue(self.validate(unsupported))
+        repeated = "## 时间锚点\nA1: 第1天\n## 第1卷\n## 时间锚点\nA2: 第2天"
+        self.assertNotIn("A2", parse_anchors(repeated))
+        self.assertTrue(self.validate(repeated))
+
+    def test_tracking_quota_accepts_only_documented_no_quota_marker(self):
+        # 同一追踪校验器：无配额记录必须与 rhythm_guard 的解释一致。
+        from rhythm_guard import _quota_letters, parse_quota_file
+        from validate_tracking import validate_quota
+        for quota in ("-", "  -  ", "A", "B", "C", "", "D", "无", "--"):
+            with self.subTest(quota=quota), tempfile.TemporaryDirectory() as directory:
+                path = Path(directory) / "quota.md"
+                path.write_text(
+                    "## A/B/C 配额记录\n| 1 | " + quota + " | 日常 |\n"
+                    "## 事件冷却记录\n## 档位记录\n", encoding="utf-8",
+                )
+                if quota.strip() in ("-", "A", "B", "C"):
+                    self.assertEqual(validate_quota(path), [])
+                    if quota.strip() == "-":
+                        self.assertEqual(_quota_letters(parse_quota_file(path)["quota"][0][1]), set())
+                else:
+                    self.assertTrue(validate_quota(path))
+
+
 class TestNormalize(unittest.TestCase):
     def test_relative_days(self):
         self.assertEqual(normalize_time("穿越后第3天"), (3, "day"))

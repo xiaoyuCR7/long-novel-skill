@@ -1,48 +1,88 @@
 # 单章写作循环（chapter-loop）
 
-写任何一章都走这个循环。顺序不要乱：先检索后动笔，先自检后更新。
+写作、修订（含一句话小改）、团队与 Beat 都复用这个循环：核对来源/授权与章意图 → Prepare
+→ stage 场景渲染 → 门禁/审核 → 最多两轮定向修复 → validate → 正文与追踪共同提交。
+中途产物是 pending draft，不是 canonical prose。大修逐章提交而非全书原子事务，见 `revision.md`。
 
 ## Step 0：欠账门（开写任何一章之前）
 
-**先补账，再开写。** 两种查验方式（等效，任选）：
+**先补账，再开写。** 先运行整书恢复报告，不能用单个门禁记录代替事务检查：
 
 ```bash
-# 方式一：整书恢复报告（推荐，会话开始跑一次）
 python scripts/resume.py "{书籍工程目录}"
-
-# 方式二：只查上一章门禁
-python scripts/check_text.py "正文/第0XX章.md" --verify-prev --current-chapter N
 ```
 
 `resume.py` 会报告：上一章门禁是否通过、正文过闸后有无改动、章节摘要/
 节奏配额是否回写、伏笔台账有无 🔴 超期、下一章章纲是否就位。
 **有欠账时先补账（修章/补记追踪），欠账不清禁止进入 Step 1。**
 
+此时先读来源与章意图，不急着创建 stage：必要改纲/设定调整须在 Step 3B prepare 前完成。
+若发现未完 journal，先执行报告里的 recover 命令；若本次请求就是修欠账，则修复该章，
+不能把欠账作为开新章的许可。工具不可用报告 `tool_unavailable`，不得手工覆盖正式文件冒充事务。
+
 ## Step 1：读章纲
 
 读 `大纲/章纲_第XXX章.md`。
 
-- 章纲存在 → 按章纲写，章纲是本章的第一约束。
+- 章纲存在 → 按权威顺序执行。章纲约束本章授权事件，但低于作者本轮明确决定、已发生正文和
+  最新追踪状态。
 - 章纲不存在 → 停。先按 `outline-system.md` 补纲（滚动补纲），不裸写。
-- 作者临时指示与章纲冲突 → 向作者确认以哪个为准；若改方向，先改章纲再写。
+- 作者临时指示与章纲冲突 → 以本轮明确决定为准并记录差异；涉及锁纲后的重大改线时，先更新
+  章纲并在作者已授权的范围内继续，必须在 prepare 前完成。纯措辞小改不强制改纲。
 
 ## Step 2：检索（最小上下文）
 
-只加载本章需要的信息，逐条核对：
+把上下文分成 required 与 conditional，不按固定文件数凑包。
 
-0. **文风锚**：`设定/文风锚.md`（如已建立）——本章正文要对齐这本书的腔调，不只是这类题材。
-1. **出场人物**：章纲列了谁，就读谁的人物卡（`设定/角色/{名}.md`）+ 该角色在
-   `追踪/角色状态.md` 里的当前条目。不出场不读。
-2. **近期剧情**：`追踪/章节摘要.md` 的最近 5–10 章详记。
-3. **伏笔**：`追踪/伏笔台账.md` 的 🟡 活跃与 🔴 超期两表——判断本章是否有
-   「按章纲应推进/回收」的项，有则把埋设细节读出来。
-4. **设定**：章纲点名的世界观条目才查 `设定/世界观.md`。
-5. **敏感词替换表**：本章涉及真实世界的地名/机构/人物/事件时，读 `设定/敏感词替换表.md`，
-   把本场景要用的代称压进速记——正文只写代称，不现场造词。方法论见
-   `references/craft/sensitive-word-replacement.md`。
-5. **历史细节**（需要时）：章纲/摘要提到某个旧细节但摘要没记全（某人说过的话、
-   某物品的去向）——先用摘要各条目的「关键实体」字段定位章节，
-   再用 Grep 在 `正文/` 里搜原文，不凭印象写。
+**Required context（缺失即 `required_context_missing` 并停止）：**
+
+1. 当前章纲。
+2. 上一章正文或可靠摘要；首章确实无前章时记 N/A，不捏造上章钩子。
+3. 本章出场人物在 `追踪/角色状态.md` 中的最新状态；人物卡补充的相关动机、底线、知识边界
+   与声线约束也须保留，不能只读卡片前30行就视作完整。普通未出场人物不强制加载。
+4. `追踪/伏笔台账.md` 中与本章相关的未结项，以及 `追踪/时间线.md` 的硬约束。
+
+旧工程没有独立人物卡时，仅在卡文件确实不存在且已读角色状态明确记载本人时使用
+`state_only` 回退，报告具体人物与状态来源；未载明的动机、知识或过往保持未知，不补造卡片。
+已存在的空卡、不可读卡、越界链接或本人状态缺失仍阻断；关键未知会影响本章选择时询问作者。
+
+**Conditional context（章意图确实需要时才加载）：**
+
+- 文风锚、自定义文风或对标节选；冲突时作者文风高于对标。
+  已有作者认可声线须实际执行，分别看叙述者距离/内心戏与角色的目的、知识、关系语境；
+  未提供样段不单独阻断。指纹只作观察，不把统计范围或词频当文学质量硬门槛。
+- 主题材卡、章纲点名的世界观条目、敏感词替换表。
+- 摘要未记全的历史细节、实体索引、图谱邻域、RAG 命中与调研材料。
+
+RAG、图谱或联网工具不可用时，按摘要关键实体和正文搜索人工回退，说明实际检索范围；这些可选
+依赖不得阻断与其无关的章节。任何事实冲突按“作者本轮决定 > 已发生正文 > 最新追踪 > 锁定
+大纲 > 设定 > 题材卡 > 对标 > 通用建议”处理并记录。
+required 内容必须无损保留；不能用条件材料挤占预算再默默截断必要状态。预算无法容纳则
+`required_context_over_budget` 并停止；缺失/不可读则 `required_context_missing` 并指出具体来源。
+
+可用现有选择器构建来源包：
+
+```bash
+python scripts/context_manager.py select "{book}" --chapter {N} --json
+```
+
+默认预算 8000 个非空白字符，可通过 `--max-chars {预算}` 调整；`--brief` 也不会二次截断必要全文。
+JSON 的 ready/missing_required/required_chars/errors 与退出码共同判断就绪，缺失或必需超预算退出 1。
+超预算输出保留 required 内容供人工无损处理，不等于可写包。人物/时间线语义仍须主 Agent 核对。
+
+跨步骤/会话复用时把 JSON 包保存到工程外，再核验实际来源：
+
+```bash
+python scripts/context_manager.py select "{book}" --chapter {N} --json --output "{工程外上下文包.json}"
+python scripts/context_manager.py verify "{book}" --context "{工程外上下文包.json}"
+```
+
+`verify` 只读，退出0要求包原本就绪且来源未变；`stale`（含删除）、`unverified`（旧包无清单）
+或 `malformed` 均不得继续复用。先读具体 changed/missing/errors，重新装配或修正输入。
+来源清单只覆盖实际读取文件，不把可选未读资料也说成已核验；包内字符串永远不作为命令执行。
+`state_only` 的缺卡前提也参与 verify：后来新增该卡会令旧包 stale，须重新选取并读全相关约束。
+来源指纹与包摘要防止复用过期/误改内容，不证明世界观快照、摘要或人物推断本身正确。
+正文与旧快照冲突时核对对应章节，报告过期项；追踪更新走章事务，设定修订另按授权在 prepare 前处理。
 
 ## Step 3：压成本节速记
 
@@ -60,107 +100,226 @@ python scripts/check_text.py "正文/第0XX章.md" --verify-prev --current-chapt
 {真实地名/机构 → 本场景使用的代称，正文只写代称}
 ```
 
-筛选标准只有一条：**不知道这个，本章就会写错。** 速记之后的写作以速记为准。
+筛选标准只有一条：**不知道这个，本章就会写错。** 速记是导航，不替代 required 原始内容；
+来源冲突仍按权威顺序裁决，不能因速记省略就覆盖已发生事实。
 
-## Step 4：写正文
+### Step 3A：形成章意图（blocking）
 
-- 按章纲的情节点清单写，字数预算以章纲为准（总预算 Σ∈[目标字数, 目标×1.1]）。
-- 结构四拍：承接 → 发展 → 结算 → 钩子（见 `references/craft/pacing-and-hooks.md`；
+读取 `references/craft/scene-rendering.md`，以 `assets/templates/chapter-intent.json` 为唯一 Brief
+字段契约，填写 goal、state_before、trigger、choice_or_cost、state_after、allowed_events、
+forbidden_releases、emotion_transition、pacing_tier、quota、style_authority、sources、ending_mode、
+hook_question 与闭合要求 closure_requirements。情绪要有前后态及触发/选择，不是单个标签。
+serial 保留授权内的下章问题；作者要求闭合选 closed，终章选 finale，后二者 hook_question
+为空，以结算与闭合余韵收束，不强制下一章悬念或预告。finale 不得把配额事件推给不存在的后续章。
+独立 Agent 必须实际收到完整章意图、required 来源内容与场景渲染规则，不能只传链接。
+
+先过 beat 预算门。授权事件不足以支撑目标篇幅时，禁止开写并输出：
+
+```text
+outline_underfilled
+missing_beat_budget: 还缺 {N} 个可产生状态变化的 beat，或将目标从 {target} 字调整为约 {supported} 字
+```
+
+同时列出要补的具体 beat 空位；不得用解释、重复、内心独白、环境描写或未授权剧情填字数。
+不能输出可继续写的待补充 Brief；先待作者确认补纲或缩短预算。
+
+在创建 stage 前，用章意图的真实声明预检既有配额和冷却：
+
+```bash
+python scripts/rhythm_guard.py --quota "{book}/追踪/节奏配额.md" --declare "{配额,事件类型,档位}" --chapter {N}
+```
+
+这是只读预检，不加 `--gate-state`。退出非零就报告实际冲突，停在 prepare 之前，给出在作者
+授权内调整章纲或由作者另定节奏策略的选择；不先写整章、不降低冷却、不改标签掩盖真实触发。
+重新理解已知事实不自动等于揭示新的核心秘密，但也不能把真实揭晓改叫日常来绕过冷却。
+事件名必须精确匹配 `reverse-brake.md` 的规范名或旧名。未知名退出2；“事件 未声明”只表示
+局部检查，不能作为完整声明交付，也不能通过删空非法事件修复门禁。
+预检通过只证明声明可行，写后仍须检查真实正文和最终声明。
+
+### Step 3B：创建章事务
+
+```bash
+python scripts/chapter_transaction.py prepare "{book}" --chapter {N}
+```
+
+`{stage}` **只指输出的 stage_root**，`{chapter_file}` 指输出文件名（旧章沿用原名，不另造同章文件）。
+stage 保留原书布局，人工只允许修改本章正文和追踪五表；gate/index 由脚本生成。
+章意图、Brief、Beat、片段、指纹和语义报告放在 stage 与正式工程之外的本次工作目录。
+不要向 stage 增加说明/备份或改纲、设定，否则触发 `stage_changed_outside_transaction`。
+prepare 后发现必须改这些输入：先 recover，再按授权修改并重新 prepare，同任务修复次数不重置。
+有实际作者授权的 B/G 误报按 `anti-ai-style.md` 登记 `设定/文风豁免.json`，必须在 prepare 前
+完成；该非隐藏文件进入快照，只豁免精确章/行/文本/规则，stage 中不可改。已有词白名单
+适用时仍使用，不全局降级检查，也不加整章 skip 标记。
+checkpoint 覆盖正文、五表、gate/index 的原字节与 absent 状态。
+`novel_flow.py prepare` 是旧上下文编排器，不创建此事务快照，不能替代本命令。
+
+## Step 4：编排场景并写 pending draft
+
+- 先按 `references/craft/scene-rendering.md` 把 beats 转为 scene units：逐个写清场景目的、冲突、
+  可观察变化、感官锚、人物行动与反应、前后过渡。
+- 大纲是事件授权，不是正文形状。可合并、交错或局部重排 beats，不得一条 beat 机械对应一段，
+  也不得新增未授权的反派、反转、支线、设定或伏笔。
+- 正文只写入 `{stage}/正文/{chapter_file}`，作为 pending draft；字数预算以通过预算门的章意图为准。
+- 结构按 ending_mode：承接 → 发展 → 结算 → 已授权悬念（serial）/闭合余韵（closed/finale）；
+  常规连载钩子工艺见 `references/craft/pacing-and-hooks.md`，不得覆盖本章闭合要求；
   章间衔接工艺——因果链/过渡/动机/呼应——见 `references/craft/chapter-junction.md`）。
 - 受题材卡约束：爽点类型、场景颗粒、声线要求按已加载的题材卡执行；
   受文风锚约束：腔调对齐样板段落；
-  受敏感词替换表约束：正文只写登记过的代称，表外敏感词当场造代称并登记回表（不改旧条）。
+  受敏感词替换表约束：正文只写登记过的代称；需新增表项时按 Step 3B 先 recover，
+  在 prepare 前更新设定再重开事务，不在 stage 改替换表。
 - 微观工艺按需查：`references/craft/` 下的对话、情绪、反转、开篇单篇。
+- 章意图含兑现、关系转折或高潮时，执行 `scene-rendering.md` 的情绪兑现与回合详略复核；
+  需要深入设计才补读 `emotion.md`，不得用重复办理动作代替当事人的变化。
 - 写到「手感不对」（人设别扭、逻辑牵强）时停下来对照人物卡，不要硬写过去。
 
-## Step 5：机器闸口（标点归一化 → 7 Gate → 节奏配额 → 文风指纹）
+## Step 5：只读工艺信号与硬门禁
 
 ```bash
-# 0. 标点归一化（先 --check 预览，确认后去掉 --check 就地改写，自动留 .bak）
-python scripts/normalize_punct.py "正文/第XXX章_标题.md" --check
-python scripts/normalize_punct.py "正文/第XXX章_标题.md"
+# 0. 标点只读候选；人工按功能决定改/留，不生成 .bak
+python scripts/normalize_punct.py "{stage}/正文/{chapter_file}" --check
 
 # 1. 7 Gate 检测 + 字数 + 禁用词 + 毒句式 + 伏笔超期 + 量化打分
-python scripts/check_text.py "正文/第XXX章_标题.md" \
+python scripts/check_text.py "{stage}/正文/{chapter_file}" \
   --min-chars {下限} --max-chars {上限} \
-  --ledger "追踪/伏笔台账.md" --current-chapter {N} --gate-report
+  --ledger "{stage}/追踪/伏笔台账.md" --current-chapter {N} --gate-report --gate-state
 
 # 2. 节奏配额检查（A/B/C 配额越界 + 事件冷却 + 档位分布）
 python scripts/rhythm_guard.py \
-  --chapter-file "正文/第XXX章_标题.md" --quota "追踪/节奏配额.md"
+  --chapter-file "{stage}/正文/{chapter_file}" --quota "{stage}/追踪/节奏配额.md" \
+  --chapter {N} --declare "{配额,事件类型,档位}" --gate-state
 
 # 3. 文风指纹偏离检测（每 5–10 章一次，或手感不对时）
-python scripts/style_fingerprint.py extract "正文/第XXX章_标题.md" --output tmp_fp.md
-python scripts/style_fingerprint.py compare tmp_fp.md "设定/文风锚.md"
+python scripts/style_fingerprint.py extract "{stage}/正文/{chapter_file}" --output "{临时目录}/fingerprint.md"
+python scripts/style_fingerprint.py compare "{临时目录}/fingerprint.md" "{stage}/设定/文风锚.md"
 ```
 
-四条命令的 FAIL 项全部处理完才进下一步。
-- `normalize_punct.py`：把省略号/破折号/感叹号堆叠/独立分隔线清掉，让停顿回归动作与短句。
-  归一化改写的是正文文件本身，所以放在所有检测之前跑；`--check` 只看不改。
+正文检查与节奏配额的实际 blocking/FAIL，以及事实、授权、预算和语义 P0 必须处理完才进入下一步。
+标点 `--check` 非零、风格指纹偏离、词频或 advisory 均是工艺复核信号，不自动成为章事务 blocking。
+只针对证据修复，最多自动修两轮；两轮后仍有
+blocking 项则输出 `gate_blocked`，保留 checkpoint 与 pending draft，canonical state 不变。
+同一章同一任务的两轮额度由主 Agent 在工作报告中记录，机器/语义 P0 共享；切换团队、Beat、
+模型、会话或重建事务不能重置。两轮后不得再自动改、不提交，也不能降级成 advisory。
+- `normalize_punct.py --check`：只看不改；有功能的破折号、省略号、语气标点保持原样。
+  不跑默认批量归一化，不为去符号强添动作。确需修正时只改 stage 正文，再重跑门禁。
 - `check_text.py --gate-report`：查七类（字数、Gate A 禁用词含白名单、Gate B 毒句式、
   Gate C 心理告知、Gate F 结尾升华、退化检测、AI 味量化打分）+ 伏笔超期。
 - `rhythm_guard.py`：查 A/B/C 配额是否越界、事件冷却是否违规、连续快档、慢档缺失。
 - `style_fingerprint.py compare`：查六维文风指标是否偏离文风锚容差。
+  偏离要对照作者认可样段与场景功能，连续三次提示也不强改。extract 只写工程外独立指纹，
+  apply 只写工程外候选目录；正式锚只人工合并认可指标，不覆盖手工契约。
 WARN（临近回收窗口、配额接近上限）纳入本章或下章的写作计划。
 
 ## Step 6：章节检查清单
 
-逐项过，任何一项答「否」就回去改：
+主 Agent 对当前候选稿真实逐项核对；不适用项标 N/A 并说明。任一 blocking/P0 未过就不能
+commit，只能在剩余额度内定向修复；两轮耗尽按 gate_blocked 停止，不无限回去改：
 
-1. 章首 10% 内接住了上一章的钩子？
-2. 本章有情节点结算（读者得到了什么）？
-3. 章尾有钩子，且下一章接得住？
+1. 有上章钩子时，章首 10% 内接住了承诺？首章无上章钩子可 N/A。
+2. 本章有情节点结算（读者得到了什么），且关键兑现前后的当事人行为/互动变化可感知？
+3. serial 的已授权钩子下一章接得住？closed/finale 则核对闭合要求兑现且没有强造下章悬念。
 4. 本章节奏档位与近 3 章分布合理（快档后不接快档）？
 5. 本章 A/B/C 配额至多触发 1 项（未越界）？
 6. 出场角色的关键选择，放在 TA 的底线与动机上说得通？
-7. 对话遮住名字能认出谁说的？
-8. 文风对齐文风锚（腔调不漂移，量化基线在容差内）？
-9. 没有设定复述（说明性段落都挂在动作/冲突/细节上）？
+7. 对话说话人清楚，角色目的、知识、关系语境与声线一致？遮名短答相似不自动失败。
+8. 文风保留作者认可特征、叙事距离和有功能的内心戏？统计偏离已按语境复核而非强制回调。
+9. 说明、日常与重复按信息/策略/关系/风险/节奏/视角功能复核，无作用重复合并，必要验收仍在？
 10. 没有元信息（「本章」、作者的话、大纲语言）？
 11. 本章新埋的伏笔都登记了？该回收的回收了？
 12. 人物状态变化都写回角色状态文件了？
-13. 字数在预算内，三条机器闸口全绿？
+13. 字数在预算内，正文与配额硬门禁通过；标点/指纹候选已判断改留而非强求零命中？
 14. 敏感词都置换为 `敏感词替换表.md` 的表内代称，正文无真实地名/机构/人物全称？
 
 章间衔接项（工艺细则见 `references/craft/chapter-junction.md`，与上表 1/3 条互补）：
-15. 上章章尾钩子承诺的危机，本章前 30% 内已兑现或推进？（过了 30% 没接 = 欺骗读者）
+15. 有上章钩子时，其承诺本章前 30% 内已兑现或推进？首章无前章时 N/A。
 16. 上章末的人物/物件/信息，本章首在合理位置（线索簿三查）；场景转换三问全过（在哪/过了多久/谁在场或主视角）？
 17. 本章首情绪与上章尾无断崖（高能章后有余波小节/情绪回声）？
 18. 本章角色第一个动作由上章结算后的状态驱动，动机链无突转？
-19. 本章呼应了至少一处前文细节，且章末钩子与本章结算有因果延伸（残账 → 下章引信）？
+19. 有前文时呼应是否自然？serial 章末问题是否因果接续结算；closed/finale 是否以变化后的
+    互动/结果兑现闭合，而非制造残账？首章不强求不存在的前文呼应。
 
-## Step 7：更新追踪五文件
+## Step 7：暂存追踪并共同提交
+
+先区分修订旧章还是写入新章。此分支适用于所有入口和改动规模：标准循环、Beat、编辑团队、
+大修以及一句话小改均相同，不能因为绕过 revision 入口就按新章追加旧记录。
+
+### 旧章：复用修订五表规则
+
+按 `references/workflow/revision.md` Step 3 处理全部五表，而非只改摘要：
+
+- `章节摘要.md`：替换受影响章的原条目，不重复追加，核对后续摘要引用。
+- `角色状态.md`：以最新已提交章为状态时间点，将本章候选修订与后续已提交事实核对后重算；
+  不把早期章状态直接写成当前状态，不回退后来已获得的能力、物品、关系或位置。
+- `伏笔台账.md`：修正原埋设/回收记录及后续依赖，不重复登记同一伏笔。
+- `时间线.md`：替换或修正原章条目，核对上下游先后关系，不再追加一份同章事件。
+- `节奏配额.md`：替换原章的配额、事件类型和档位记录，复核上下游冷却，不重复累计触发。
+
+无事实变化的措辞修订保留无变化表，不强行追加记录或制造状态变化。发现跨章影响则按
+revision 的范围与冻结规则处理，核对完成前不开新章；旧章也必须完成下述共同校验与提交。
+
+### 新章：按实际新增事实追加
 
 - `章节摘要.md`：按模板字段追加本章（「关键实体」宁多勿漏；**「承上/启下」两栏必填**——
   这是章间衔接设计的记录与断更恢复的依据，衔接工艺见 `references/craft/chapter-junction.md`）；
   近 10 章之外的老摘要按模板规则向上压缩。
+  首章承上可 N/A，closed/finale 启下记“本章闭合/全书完结，无下章预告”。
 - `角色状态.md`：更新有变化的角色，变更记录追加一行（无变化的角色不动）。
 - `伏笔台账.md`：新埋登记（🟡）、回收销账（✅）、检查是否出现超期（🔴）。
 - `时间线.md`：本章发生明确时间推移时追加。
 - `节奏配额.md`：追加本章的 A/B/C 触发记录、事件类型、档位记录。
 
+### 共同校验与提交
+
+五项变更全部写入 `{stage}/追踪/` 并复核，不要边写正文边逐个覆盖 canonical 文件。
+
+**提交条件**：blocking gates 为零、自查通过、追踪格式与同步验证通过。用下面的 validate 执行
+同一 stage 上的追踪校验 → 正文 gate（含 SHA-256）→ rhythm gate → 最新摘要实体索引构建，
+再记录全部 staged 文件哈希。任一步失败，正式文件不变；修完重新 validate，不能沿用旧成功记录。
+validate 不读取也不验证语义报告；情绪兑现、人物一致性、结尾模式等 P0 由主 Agent 真实自查。
+报告留在工程外工作目录，记录当前正文哈希及两轮修复结果。工艺争议只补短摘录、功能与
+改/留理由；不另造 Brief schema，不凑 3–5 个问题。修后确认说话人、主体指代和空间清楚，
+必要验收及变化后的关系仍在，不把每拍都扩写。不手填机器 gate 冒充通过。
+
 **欠账门**：本章追踪文件未全部更新前，禁止开写下一章。会话中断后恢复写作时，
 先核对「最后一章正文 ↔ 追踪文件」是否同步（摘要里有没有这一章、角色状态有没有回写），
 有欠账先补账，再进入 Step 1。
 
-更新完五文件后立刻跑两件事：
+提交与恢复命令：
 
 ```bash
-# 1. 追踪文件格式复核（防模型把表格/字段写歪，导致下游脚本静默漏检）
-python scripts/validate_tracking.py "{书名目录}"
-
-# 2. 重建实体→章节索引（本章摘要的「关键实体」字段聚合进 追踪/entity_index.json）
-python scripts/entity_index.py build "{书名目录}"
+# 1. 参数 book 是事务所属正式工程；脚本只验证 journal 指定的 stage，并生成 stage gate/index
+python scripts/chapter_transaction.py validate "{book}" --min-chars {下限} --max-chars {上限} --declare "{配额,事件类型,档位}"
+# 2. 自查真实通过后才确认提交；未确认不得使用此 flag
+python scripts/chapter_transaction.py commit "{book}" --self-review-confirmed
+# 3. 仅在失败/中断需要放弃本次未完成提交时执行
+python scripts/chapter_transaction.py recover "{book}"
 ```
 
-`validate_tracking.py` 报告任何格式问题都要当场修；`entity_index.py build` 无输出即成功。
-之后下一章写前用 `entity_index.py query "{书名目录}" {实体名}` 定位历史章节，
-不再凭印象写旧细节。
+诊断单项时可运行 `python scripts/validate_tracking.py "{stage}"` 或
+`python scripts/entity_index.py build "{stage}"`，但它们不替代 validate/commit 协议。
+若 `--declare` 的值以减号开头（不触发配额），使用 `--declare=-,world_painting,中` 的等号写法。
+
+### 锁、journal 与恢复边界
+
+- 多文件提交**不是单次原子 os.replace**。事务锁串行化本协议操作；journal 先落盘，再逐文件替换。
+  进程崩溃期间文件可能处于中间态，resume/prepare 与旧编排器锁检查必须拒绝把它当完成章。
+- 提交前比较 canonical 与 prepare 时全部输入哈希，并校验 staged 哈希；提交中/后也检查目标，
+  检测到外部变化返回 `state_conflict`。不合作的编辑器不受锁强制约束，不能保证无竞争写入；提交期间
+  不得并发编辑原书或 stage。文档/工具不能将此协议宣传为数据库级隔离。
+- 普通落盘错误自动恢复 checkpoint；进程强制退出后按持久 journal 显式 recover。新建文件回滚到
+  不存在，旧文件恢复原字节。若检测到外部改动或备份损坏，保留 journal/stage/checkpoint 并阻断，
+  不覆盖作者新改动；人工保存冲突副本、还原 journal 的 before/after 之一后再 recover。
+- recover 会放弃本次待提交事务（保留审计资料），不会偷偷完成半次提交。下一次 prepare 归档终态
+  checkpoint/journal。文件与日志 fsync 后替换；断电/设备故障的持久性仍受操作系统与文件系统保证约束。
+- 已通过的 gate 存的是文件名与内容哈希，不引用临时绝对路径；提交后 resume 可识别，保留 mtime
+  仅为旧 gate 兼容。验证之后编辑 stage 必须重验。
+
+日更写前另见 `references/workflow/daily-failfast.md`。下一章用
+`python scripts/entity_index.py query "{book}" "{实体名}"` 定位历史，不凭印象写旧细节。
 
 ## Step 8：向作者报告
 
 一段话即可：本章标题与一句话内容、关键状态变化、伏笔进出、台账里有没有 🔴、
-下一章预告。有 🔴 或需要作者决策的事，放在最前面说。
+serial 可附授权内的下一章预告；closed/finale 报告闭合兑现，不强制预告。有 🔴 或需作者决策的事放最前。
 
 每卷写完：按 `references/craft/review-rubric.md` 做一次盲评（子代理、无上下文），
 评审结论记入卷纲批注，下卷开写前复查整改项。

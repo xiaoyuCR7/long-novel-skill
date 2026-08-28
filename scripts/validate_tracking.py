@@ -8,10 +8,10 @@
   追踪/伏笔台账.md  四节齐备（🔴🟡🟢✅）、表格列数正确、ID 形如 F1-03、
                     埋设章节为数字、🟡 表「预期回收」可解析（数字或含「卷」）
   追踪/节奏配额.md  三节齐备（A/B/C 配额 / 事件冷却 / 档位）、章节为数字、
-                    配额字母 ∈ {A,B,C}、事件类型 ∈ 已知六类、档位 ∈ {快,慢,中}
+                    配额字母 ∈ {A,B,C} 或 -（不触发）、事件类型 ∈ 已知六类、档位 ∈ {快,慢,中}
   追踪/章节摘要.md  有「近 10 章详记」节；每个 ### 第N章 条目含七个必填字段
   追踪/角色状态.md  每个 ## 角色 节含四个必填字段
-  追踪/时间线.md    表格行列数 ≥4、首列含章号
+  追踪/时间线.md    章节表格行列数 ≥4、首列含章号；时间锚点遵循原生三列/文本格式
 
 用法：
   python3 scripts/validate_tracking.py "{书名目录}"
@@ -25,8 +25,10 @@ import os
 import re
 import sys
 
-EVENT_TYPES = {"conflict_thrill", "bond_deepening", "faction_building",
-               "world_painting", "tension_escalation", "revelation"}
+from timeline_manager import parse_anchors
+from config import EVENT_META, EVENT_ALIASES
+
+EVENT_TYPES = set(EVENT_META) | set(EVENT_ALIASES)
 GEARS = {"快", "慢", "中"}
 LEDGER_ID_RE = re.compile(r"^F\d+-\d+$")
 
@@ -141,9 +143,10 @@ def validate_quota(path):
             issues.append(f"第{i + 1}行 [{section}] 章节列「{cells[0]}」无数字")
             continue
         if section == "quota":
-            letters = set(re.findall(r"[ABC]", cells[1] if len(cells) > 1 else ""))
-            if not letters:
-                issues.append(f"第{i + 1}行 [配额] 配额列「{cells[1] if len(cells) > 1 else ''}」无 A/B/C")
+            quota = cells[1] if len(cells) > 1 else ""
+            letters = set(re.findall(r"[ABC]", quota))
+            if not letters and quota != "-":
+                issues.append(f"第{i + 1}行 [配额] 配额列「{quota}」应含 A/B/C 或为 -（不触发）")
         elif section == "events":
             ev = cells[1] if len(cells) > 1 else ""
             if ev and ev not in EVENT_TYPES:
@@ -197,7 +200,35 @@ def validate_character_state(path):
 def validate_timeline(path):
     issues = []
     lines = _read(path).splitlines()
+    in_anchors = False
+    anchors_closed = False
     for i, line in enumerate(lines):
+        # 与 parse_anchors 相同：只读取首个锚点区块，一级至三级标题结束区块。
+        if re.match(r"^#{1,3}\s*时间锚点", line):
+            if anchors_closed:
+                issues.append(f"第{i + 1}行 [时间锚点] 原生解析器不支持重新开启锚点区块")
+            else:
+                in_anchors = True
+            continue
+        if in_anchors and re.match(r"^#{1,3}\s", line):
+            in_anchors = False
+            anchors_closed = True
+        if in_anchors:
+            stripped = line.strip()
+            if not stripped or stripped.startswith((">", "#")):
+                continue
+            cells = _cells(line)
+            if cells == ["编号", "标签", "时间表达式"] or all(
+                cell and set(cell) <= set("-: ") for cell in cells
+            ):
+                continue
+            # 直接复用原生语法；额外拒绝解析器会回退/忽略的空字段与坏行。
+            anchors = parse_anchors("## 时间锚点\n" + line)
+            table_row = stripped.startswith("|") or re.fullmatch(r"A\d+", cells[0])
+            if (not anchors or any(not a["label"] or not a["time_expr"] for a in anchors.values())
+                    or (table_row and (len(cells) != 3 or not all(cells)))):
+                issues.append(f"第{i + 1}行 [时间锚点] 应为非空的 A编号/标签/时间三列，或 A编号: 时间文本")
+            continue
         if not line.strip().startswith("|"):
             continue
         cells = _cells(line)
