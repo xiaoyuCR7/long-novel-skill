@@ -67,6 +67,46 @@ def _context_manager_args(params):
     raise ValueError("unsupported context action")
 
 
+def _entity_index_args(action, book_dir, query=None):
+    args = [action, book_dir]
+    if query:
+        args.append(query)
+    return args
+
+
+def _story_graph_args(action, book_dir, node=None, chapter=None, from_chapter=None,
+                      description=None, output=None, depth=1, from_scratch=False):
+    args = [action, book_dir]
+    if action in {"query", "impact"}:
+        if not node:
+            raise ValueError(f"{action} requires node")
+        args.append(node)
+    if action == "query" and depth != 1:
+        args.extend(["--depth", str(depth)])
+    if action == "cascade":
+        if from_chapter is None:
+            raise ValueError("cascade requires from_chapter")
+        args.extend(["--from-chapter", str(from_chapter)])
+        if description:
+            args.extend(["--desc", description])
+    if action == "update":
+        if chapter is None:
+            raise ValueError("update requires chapter")
+        args.extend(["--chapter", str(chapter)])
+    if action == "export" and output:
+        args.extend(["--output", output])
+    if action == "build" and from_scratch:
+        args.append("--from-scratch")
+    return args
+
+
+def _rag_retriever_args(action, book_dir, query, top):
+    args = [action, book_dir]
+    if query:
+        args.append(query)
+    return args + ["--top", str(top)]
+
+
 # 尝试导入mcp
 HAS_MCP = False
 try:
@@ -162,6 +202,12 @@ class StoryGraphInput(BaseModel):
                        pattern="^(build|query|cascade|impact|export|status|update)$")
     book_dir: str = Field(..., description="书籍工程目录路径")
     node: Optional[str] = Field(default=None, description="节点名称")
+    chapter: Optional[int] = Field(default=None, description="update 的章节号", ge=1)
+    from_chapter: Optional[int] = Field(default=None, description="cascade 起始章节", ge=1)
+    description: Optional[str] = Field(default=None, description="cascade 改纲说明")
+    output: Optional[str] = Field(default=None, description="export 输出文件")
+    depth: int = Field(default=1, description="query 查询深度", ge=1)
+    from_scratch: bool = Field(default=False, description="build 是否从头重建")
 
 
 class ResearchInput(BaseModel):
@@ -495,9 +541,7 @@ def create_mcp_server():
     async def novel_entity_index(params: EntityIndexInput) -> str:
         """构建实体索引或执行语义检索。"""
         try:
-            args = [params.action, params.book_dir]
-            if params.query:
-                args.extend(["--query", params.query])
+            args = _entity_index_args(params.action, params.book_dir, params.query)
             
             return json.dumps(_run_script("entity_index", args), indent=2)
         except Exception as e:
@@ -518,9 +562,10 @@ def create_mcp_server():
     async def novel_story_graph(params: StoryGraphInput) -> str:
         """管理故事知识图谱，包括构建、查询、级联标记和影响分析。"""
         try:
-            args = [params.action, params.book_dir]
-            if params.node:
-                args.extend(["--node", params.node])
+            args = _story_graph_args(
+                params.action, params.book_dir, params.node, params.chapter,
+                params.from_chapter, params.description, params.output,
+                params.depth, params.from_scratch)
             
             return json.dumps(_run_script("story_graph", args), indent=2)
         except Exception as e:
@@ -787,19 +832,16 @@ def create_mcp_server():
         name="novel_rag_retriever",
         annotations={
             "title": "RAG检索增强",
-            "readOnlyHint": True,
+            "readOnlyHint": False,
             "destructiveHint": False,
-            "idempotentHint": True,
+            "idempotentHint": False,
             "openWorldHint": False
         }
     )
     async def novel_rag_retriever(params: RAGRetrieverInput) -> str:
         """BM25两级语义检索，包括增量索引、查询缓存和命中可解释。"""
         try:
-            args = [params.action, params.book_dir]
-            if params.query:
-                args.extend(["--query", params.query])
-            args.extend(["--top", str(params.top)])
+            args = _rag_retriever_args(params.action, params.book_dir, params.query, params.top)
             
             return json.dumps(_run_script("rag_retriever", args), indent=2)
         except Exception as e:

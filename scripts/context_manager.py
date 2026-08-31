@@ -41,6 +41,8 @@ import time
 from pathlib import Path, PureWindowsPath
 from typing import Any, Dict, List, Optional, Tuple
 
+from common import SUMMARY_FIELD_NAMES, extract_summary_fields
+
 # =========================================================
 # 从 config.py 导入（带 fallback）
 # =========================================================
@@ -58,7 +60,7 @@ except ImportError:
 VERSION = "1.1.0"
 
 # 上下文预算默认值（字符数）
-DEFAULT_MAX_CHARS = 8000
+DEFAULT_MAX_CHARS = DEFAULT_MAX_CONTEXT_CHARS
 
 # 各组件预算分配比例（静态默认值，无动态阶段时使用）
 BUDGET_RATIOS = {
@@ -168,9 +170,6 @@ STAGE_STRATEGIES = {
     ),
 }
 
-# 近章摘要默认数量
-DEFAULT_RECENT_CHAPTERS = 10
-
 # 压缩阈值（超过此字数的摘要需压缩）
 COMPRESS_THRESHOLD = 500
 
@@ -200,6 +199,11 @@ def _estimate_total_chapters(book_dir: Path, reader=None) -> Optional[int]:
                 return int(total_match.group(1))
             except ValueError:
                 pass
+
+        # 常见总纲直接写“第1-50章”或“第951—1000章”，不一定带卷标题。
+        ranges = re.findall(r"第\s*(\d+)\s*[-—~～至到]\s*(\d+)\s*章", content)
+        if ranges:
+            return max(max(int(start), int(end)) for start, end in ranges)
 
         # 查找「第X卷」中的章节分配信息，如"第X卷：第n-m章"
         volume_chapters = re.findall(r"第[一二三四五六七八九十百\d]+卷.*?第(\d+).*?第(\d+)\s*章", content)
@@ -598,34 +602,49 @@ def get_recent_summaries(chapters: List[Dict], target_chapter: int, count: int =
 
 
 def compress_summaries(chapters: List[Dict], from_ch: int, to_ch: int) -> str:
-    """压缩多章摘要为回顾段"""
+    """把多章详记压成仍可被机器解析的结构化卷级记忆。"""
     target = [ch for ch in chapters if from_ch <= ch["chapter"] <= to_ch]
     target.sort(key=lambda x: x["chapter"])
 
     if not target:
         return f"第{from_ch}-{to_ch}章无摘要数据。"
 
-    lines = [f"## 第{from_ch}-{to_ch}章 回顾压缩"]
-    lines.append(f"(原始摘要 {len(target)} 章，共 {sum(c['char_count'] for c in target)} 字 → 压缩为回顾段)\n")
+    aliases = {
+        "发生了什么": ("发生了什么", "章节摘要", "一句话", "概要"),
+        "状态变化": ("状态变化", "人物变化"),
+        "伏笔进出": ("伏笔进出", "伏笔变化"),
+        "关键实体": ("关键实体",),
+        "时间约束": ("时间约束", "时间锚点"),
+    }
 
+    def values(raw, names):
+        labels = "|".join(re.escape(name) for name in names)
+        matches = re.findall(
+            r"^\s*(?:[-*]\s*)?(?:\*\*)?(?:" + labels
+            + r")(?:\*\*)?\s*[：:]\s*(.+?)\s*$", raw, re.MULTILINE)
+        return [value.strip() for value in matches if value.strip()]
+
+    collected = {field: [] for field in aliases}
     for ch in target:
-        # 提取关键信息（标题行 + 关键实体 + 一句话摘要）
-        raw = ch["raw"]
-        # 取标题行
-        title_line = raw.split("\n")[0] if raw else f"第{ch['chapter']}章"
-        # 尝试提取一句话摘要
-        one_line = ""
-        for line in raw.split("\n"):
-            if "一句话" in line or "摘要" in line or "概要" in line:
-                one_line = line.split(":", 1)[-1].split("：", 1)[-1].strip()
-                break
-        if one_line:
-            lines.append(f"- {title_line}：{one_line}")
-        else:
-            # 截取前100字
-            compressed = truncate_text(raw, 100)
-            lines.append(f"- {title_line}：{compressed}")
+        raw = ch.get("raw", "")
+        chapter_events = []
+        for field, names in aliases.items():
+            field_values = values(raw, names)
+            for value in field_values:
+                collected[field].append(f"第{ch['chapter']}章 {value}")
+            if field == "发生了什么":
+                chapter_events.extend(field_values)
+        if not chapter_events:
+            body = "\n".join(raw.splitlines()[1:]).strip()
+            if body:
+                collected["发生了什么"].append(
+                    f"第{ch['chapter']}章 {truncate_text(body, 160)}")
 
+    lines = [f"## 第{from_ch}-{to_ch}章 回顾压缩"]
+    lines.append(f"- 来源章节：{from_ch}-{to_ch}")
+    for field in ("发生了什么", "状态变化", "伏笔进出", "关键实体", "时间约束"):
+        value = "；".join(dict.fromkeys(collected[field])) or "N/A"
+        lines.append(f"- {field}：{value}")
     return "\n".join(lines)
 
 
@@ -734,6 +753,19 @@ def _select_character_card(content: str) -> Dict[str, Any]:
             "selection": "semantic_sections" if semantic_lines else "full_unknown_format"}
 
 
+def _summary_is_reliable(raw: str) -> bool:
+    """Fail closed for an emitted seven-field summary whose fields are blank."""
+    body = "\n".join((raw or "").splitlines()[1:]).strip()
+    if not body:
+        return False
+    labels = "|".join(re.escape(name) for name in SUMMARY_FIELD_NAMES)
+    if not re.search(r"^\s*(?:[-*]\s*)?(?:\*\*)?(?:" + labels
+                     + r")(?:\*\*)?\s*[：:]", body, re.MULTILINE):
+        return True  # Legacy prose remains a supported, explicit fallback.
+    fields = extract_summary_fields(body)["summary_fields"]
+    return all(str(fields.get(name, "")).strip() for name in SUMMARY_FIELD_NAMES)
+
+
 def _required_context(book_dir: Path, chapter: int, reader=None):
     """Never compress away facts required to write safely. Ambiguity is reported."""
     components, missing = {}, []
@@ -770,11 +802,14 @@ def _required_context(book_dir: Path, chapter: int, reader=None):
                 kept.append(section)
         state = "".join(kept)
     add("character_state", state_path, state)
-    add("foreshadowing", book_dir / "追踪/伏笔台账.md")
-    add("timeline", book_dir / "追踪/时间线.md")
+    foreshadow_path = book_dir / "追踪/伏笔台账.md"
+    add("foreshadowing", foreshadow_path,
+        extract_active_foreshadows(read(foreshadow_path), chapter))
+    timeline_path = book_dir / "追踪/时间线.md"
+    add("timeline", timeline_path, extract_relevant_timeline(read(timeline_path), chapter))
     if chapter > 1:
         previous = [s for s in parse_chapter_summaries(book_dir, reader=reader) if s["chapter"] == chapter - 1]
-        if len(previous) == 1 and "\n".join(previous[0]["raw"].splitlines()[1:]).strip():
+        if len(previous) == 1 and _summary_is_reliable(previous[0]["raw"]):
             add("previous_chapter", book_dir / "追踪/章节摘要.md", previous[0]["raw"])
         else:
             candidates = [p for p in (book_dir / "正文").glob("*.md")
@@ -814,8 +849,40 @@ def _required_context(book_dir: Path, chapter: int, reader=None):
     return components, missing
 
 
+def _transaction_blocked_context(book_dir, target_chapter, max_chars, stage, recovery):
+    blocked = {
+        "version": VERSION, "book_dir": str(book_dir), "target_chapter": target_chapter,
+        "max_chars": max_chars, "stage": stage or "unknown",
+        "budget_ratios_used": get_dynamic_budget_ratios(stage) if stage else dict(BUDGET_RATIOS),
+        "components": {}, "ready": False, "missing_required": [], "required_chars": 0,
+        "errors": ["transaction_incomplete"], "recovery_command": recovery,
+        "total_chars": 0, "budget_used": 0, "brief_chars": 0,
+        "source_manifest": [], "omitted_sources": [],
+    }
+    blocked["package_sha256"] = _package_sha256(blocked)
+    blocked["brief_chars"] = count_chars(_render_brief_context(blocked))
+    blocked["package_sha256"] = _package_sha256(blocked)
+    return blocked
+
+
 def select_context(book_dir: Path, target_chapter: int, max_chars: int = DEFAULT_MAX_CHARS,
                    stage: Optional[str] = None) -> Dict[str, Any]:
+    """Read one coherent canonical snapshot under the shared transaction lock."""
+    if target_chapter < 1 or max_chars < 1:
+        raise ValueError("chapter and max_chars must be positive")
+    book_dir = Path(book_dir).absolute()
+    from chapter_transaction import TransactionError, recovery_command
+    from common import canonical_read_lock
+    try:
+        with canonical_read_lock(book_dir):
+            return _select_context_unlocked(book_dir, target_chapter, max_chars, stage)
+    except (TransactionError, OSError):
+        return _transaction_blocked_context(
+            book_dir, target_chapter, max_chars, stage, recovery_command(book_dir))
+
+
+def _select_context_unlocked(book_dir: Path, target_chapter: int, max_chars: int,
+                             stage: Optional[str]) -> Dict[str, Any]:
     """为目标章节选取最小必读上下文。
 
     v1.1 增强：
@@ -834,9 +901,6 @@ def select_context(book_dir: Path, target_chapter: int, max_chars: int = DEFAULT
         上下文包字典。
     """
 
-    if target_chapter < 1 or max_chars < 1:
-        raise ValueError("chapter and max_chars must be positive")
-    book_dir = Path(book_dir).absolute()
     reader = _ContextReader(book_dir)
     required, missing = _required_context(book_dir, target_chapter, reader=reader)
     required_chars = sum(c["chars"] for c in required.values())
@@ -951,11 +1015,16 @@ def select_context(book_dir: Path, target_chapter: int, max_chars: int = DEFAULT
     if reader.optional(entity_index_file, budget.get("entity_context", 0)):
         try:
             entity_data = json.loads(reader(entity_index_file))
-            # 提取与目标章节相关的实体
+            # 以待写章章纲中的实体为查询，召回其历史出现章；待写章本身尚未入索引。
+            chapter_brief = context["components"].get("chapter_brief", {}).get("content", "")
+            index_entries = entity_data.get("entities", entity_data) if isinstance(entity_data, dict) else {}
             relevant = {}
-            for entity, chapters in entity_data.items():
-                if isinstance(chapters, list) and target_chapter in chapters:
-                    relevant[entity] = chapters[-5:]  # 最近5章
+            for entity, chapters in index_entries.items():
+                if not isinstance(entity, str) or entity not in chapter_brief or not isinstance(chapters, list):
+                    continue
+                historical = [ch for ch in chapters if isinstance(ch, int) and ch < target_chapter]
+                if historical:
+                    relevant[entity] = historical[-5:]
             entity_text = json.dumps(relevant, ensure_ascii=False, indent=2)
             entity_text = truncate_text(entity_text, budget["entity_context"])
             context["components"]["entity_context"] = {
@@ -990,7 +1059,33 @@ def select_context(book_dir: Path, target_chapter: int, max_chars: int = DEFAULT
                 "content": milestone_text,
             }
 
-    # 计算总字数
+    # Brief 是实际注入写作模型的载荷。若固定标签使其超限，先缩减可选组件；
+    # required 内容保持逐字不变，仍超限则明确阻断。
+    brief = _render_brief_context(context)
+    overflow = count_chars(brief) - max_chars
+    if overflow > 0 and context["ready"]:
+        for name in reversed(list(context["components"])):
+            component = context["components"][name]
+            if component.get("required") or name == "character_cards":
+                continue
+            content = component.get("content", "")
+            if not content:
+                continue
+            keep = max(0, count_chars(content) - overflow)
+            component["content"] = truncate_text(content, keep, suffix="")
+            component["chars"] = count_chars(component["content"])
+            brief = _render_brief_context(context)
+            overflow = count_chars(brief) - max_chars
+            if overflow <= 0:
+                break
+    brief = _render_brief_context(context)
+    context["brief_chars"] = count_chars(brief)
+    if context["ready"] and context["brief_chars"] > max_chars:
+        context["ready"] = False
+        if "required_context_over_budget" not in context["errors"]:
+            context["errors"].append("required_context_over_budget")
+
+    # 计算组件内容字数（保留既有 total_chars 语义）。
     total = sum(comp.get("chars", 0) for comp in context["components"].values())
     context["total_chars"] = total
     context["budget_used"] = round(total / max_chars * 100, 1) if max_chars > 0 else 0
@@ -1051,26 +1146,79 @@ def extract_mentioned_characters(chapter_content: str, book_dir: Path) -> List[s
 
 
 def extract_active_foreshadows(foreshadow_content: str, target_chapter: int) -> str:
-    """提取活跃伏笔（未回收且回收窗口包含目标章节）"""
-    lines = foreshadow_content.split("\n")
-    active_lines = []
+    """保留未结生命周期分节；未知旧格式保持全文，避免误删硬约束。"""
+    lines = foreshadow_content.splitlines()
+    selected, section, recognized = [], None, False
     for line in lines:
-        # 检查是否是未回收伏笔行（含 🟡 或 🔴 或 待回收）
-        if "🟡" in line or "🔴" in line or "待回收" in line or "未回收" in line:
-            active_lines.append(line)
-        # 检查回收窗口
-        window_match = re.search(r"回收.*?第(\d+).*?第(\d+)章", line)
-        if window_match:
-            start_ch = int(window_match.group(1))
-            end_ch = int(window_match.group(2))
-            if start_ch <= target_chapter <= end_ch:
-                if line not in active_lines:
-                    active_lines.append(line)
+        heading = re.match(r"^#{1,6}\s*(.+)$", line)
+        if heading:
+            title = heading.group(1)
+            if any(marker in title for marker in ("🔴", "🟡", "🟢", "超期", "活跃", "长线", "未结")):
+                section, recognized = "active", True
+                selected.append(line)
+                continue
+            if "✅" in title or "已回收" in title or "归档" in title:
+                section, recognized = "resolved", True
+                continue
+            section = None
+            if len(selected) == 0 and line.startswith("# "):
+                selected.append(line)
+            continue
+        if section == "active":
+            selected.append(line)
+        elif section is None and any(marker in line for marker in
+                                     ("🔴", "🟡", "🟢", "待回收", "未回收", "超期")):
+            selected.append(line)
 
-    if not active_lines:
-        # 如果没找到活跃伏笔，返回前20行
-        return "\n".join(lines[:20])
-    return "\n".join(active_lines)
+    if not recognized:
+        return foreshadow_content
+    meaningful = [line for line in selected if line.strip() and not line.lstrip().startswith("#")]
+    return "\n".join(selected).strip() if meaningful else "# 活跃伏笔\n（无未结伏笔）"
+
+
+def extract_relevant_timeline(timeline_content: str, target_chapter: int) -> str:
+    """选择当前锚点/承诺/约束；无法识别的旧格式保持全文。"""
+    sections = re.split(r"(?=^##\s+)", timeline_content, flags=re.MULTILINE)
+    if len(sections) == 1:
+        return timeline_content
+    active_words = ("当前", "锚点", "承诺", "约束", "待办", "未完成", "分支")
+    archive_words = ("历史", "归档", "已完成", "已结束")
+    selected = [sections[0]] if sections[0].strip() else []
+    recognized = active_found = False
+    for section in sections[1:]:
+        heading = section.splitlines()[0] if section.splitlines() else ""
+        if any(word in heading for word in active_words):
+            selected.append(section)
+            recognized = True
+            active_found = True
+        elif any(word in heading for word in archive_words):
+            recognized = True
+    if recognized and active_found:
+        return "".join(selected).strip()
+    return timeline_content
+
+
+def _render_brief_context(context: Dict[str, Any]) -> str:
+    """Render the actual compact prompt payload; provenance stays in JSON/report."""
+    lines = []
+    if not context.get("ready", True):
+        lines.append("BLOCKED: " + ", ".join(context.get("errors", [])))
+    lines.append(f"# 第{context['target_chapter']}章写作上下文")
+    for name, component in context.get("components", {}).items():
+        lines.append(f"\n[{name}]")
+        if name == "character_cards":
+            for legacy in component.get("state_only", []):
+                lines.append(f"{legacy['name']} 无独立人物卡；仅使用 {legacy['source']}，未载明事实保持未知。")
+            for card in component.get("characters", []):
+                lines.append(f"{card['name']}：")
+                for omitted in card.get("omitted_sections", []):
+                    lines.append(f"省略可选段：{omitted['heading']}")
+                lines.append(card.get("content", ""))
+        else:
+            content = component.get("content", "")
+            if content:
+                lines.append(content)
+    return "\n".join(lines)
 
 
 # =========================================================
@@ -1137,9 +1285,7 @@ def generate_context_report(context: Dict[str, Any]) -> str:
 
 def generate_brief_context(context: Dict[str, Any]) -> str:
     """生成精简版上下文（本节速记格式）"""
-    # Selection already applied the budget. A second truncation would drop hard
-    # constraints and current state from the very packet used by novel_flow.
-    return generate_context_report(context)
+    return _render_brief_context(context)
 
 
 # =========================================================

@@ -60,24 +60,33 @@ def check_gate(book_root, chapter_no, chapter_path):
     except (OSError, ValueError) as e:
         debts.append(f"第{chapter_no}章门禁文件损坏：{e}")
         return debts, notes
-    if not state.get("passed"):
-        debts.append(f"第{chapter_no}章门禁未通过（blocking={state.get('blocking')}）：先修再写")
-    recorded = state.get("chapter_mtime")
-    if recorded and chapter_path and os.path.isfile(chapter_path):
+    required = {"chapter", "chapter_file", "chapter_sha256", "passed", "rhythm"}
+    missing = sorted(required - set(state)) if isinstance(state, dict) else sorted(required)
+    if missing:
+        debts.append(f"第{chapter_no}章门禁文件不完整：缺少 {', '.join(missing)}")
+        return debts, notes
+    if state.get("chapter") != chapter_no:
+        debts.append(f"第{chapter_no}章门禁章节标识不匹配：重跑门禁")
+    if not chapter_path or not os.path.isfile(chapter_path):
+        debts.append(f"第{chapter_no}章正文不存在：无法核对门禁")
+        return debts, notes
+    if state.get("chapter_file") != os.path.basename(chapter_path):
+        debts.append(f"第{chapter_no}章门禁正文文件不匹配：重跑门禁")
+    recorded_hash = state.get("chapter_sha256")
+    if not isinstance(recorded_hash, str) or not re.fullmatch(r"[0-9a-f]{64}", recorded_hash):
+        debts.append(f"第{chapter_no}章门禁正文哈希不合法：重跑门禁")
+    else:
         with open(chapter_path, "rb") as handle:
             digest = hashlib.sha256(handle.read()).hexdigest()
-        changed = (digest != state["chapter_sha256"] if state.get("chapter_sha256")
-                   else abs(os.stat(chapter_path).st_mtime - float(recorded)) > 1.0)
-        if changed:
+        if digest != recorded_hash:
             debts.append(f"第{chapter_no}章正文在过闸后有改动：重跑门禁")
+    if state.get("passed") is not True:
+        debts.append(f"第{chapter_no}章门禁未通过（blocking={state.get('blocking')}）：先修再写")
     rhythm = state.get("rhythm")
-    if isinstance(rhythm, dict):
-        if rhythm.get("passed") is False:
-            debts.append(f"第{chapter_no}章节奏配额检查未通过（fails={rhythm.get('fails')}）")
-        else:
-            notes.append("节奏配额检查已通过")
+    if not isinstance(rhythm, dict) or rhythm.get("passed") is not True:
+        debts.append(f"第{chapter_no}章节奏配额检查未通过或缺失（fails={rhythm.get('fails') if isinstance(rhythm, dict) else None}）")
     else:
-        notes.append("无节奏检查记录（建议跑 rhythm_guard.py --gate-state）")
+        notes.append("节奏配额检查已通过")
     return debts, notes
 
 
@@ -331,7 +340,8 @@ def _discover(book_root):
                         chapter_records.append(relative)
                 elif path.suffix.lower() in {".md", ".txt"}:
                     candidate(path, info)
-                elif mode == "root" and path.name == ".deslop-whitelist":
+                elif mode == "root" and path.name in {
+                        ".deslop-whitelist", ".chapter-transaction.lock", ".snapshot-restore.json"}:
                     pass
                 else:
                     reasons.append("未识别文件：" + relative)

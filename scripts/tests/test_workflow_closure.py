@@ -1104,16 +1104,17 @@ class WorkflowClosureTests(unittest.TestCase):
                 self.assertEqual(prepared["chapter_file"], "第001章_旧标题.md")
                 stage = Path(prepared["stage_root"])
                 prose = self.fill_stage(stage, prepared["chapter_file"])
+                expected_prose = prose.read_bytes()
                 execute(commands[1])
                 self.assertEqual(transaction.book_hashes(book), before)
                 # Machine validation is not semantic confirmation.
                 with self.assertRaisesRegex(transaction.TransactionError, "self_review_confirmation_required"):
                     transaction.commit(book)
                 execute(commands[2])
-                self.assertEqual((book / "正文" / prose.name).read_bytes(), prose.read_bytes())
+                self.assertEqual((book / "正文" / prose.name).read_bytes(), expected_prose)
                 self.assertEqual([p.name for p in (book / "正文").glob("*.md")], [prose.name])
                 gate = json.loads((book / "追踪/门禁/gate_ch1.json").read_text(encoding="utf-8"))
-                self.assertEqual(gate["chapter_sha256"], hashlib.sha256(prose.read_bytes()).hexdigest())
+                self.assertEqual(gate["chapter_sha256"], hashlib.sha256(expected_prose).hexdigest())
                 self.assertTrue(gate["rhythm"]["passed"])
                 self.assertIsNone(transaction.pending_transaction(book))
 

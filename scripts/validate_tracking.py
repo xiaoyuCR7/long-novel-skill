@@ -75,6 +75,7 @@ def validate_ledger(path):
     lines = text.splitlines()
 
     found = {}
+    seen_ids = {}
     section = None
     for i, line in enumerate(lines):
         h = re.match(r"^#{1,4}\s*(.+)", line)
@@ -98,12 +99,22 @@ def validate_ledger(path):
             fid = cells[0]
             if not LEDGER_ID_RE.match(fid):
                 issues.append(f"第{i + 1}行 [{name}] ID「{fid}」不合规（应为 F{{卷}}-{{序号}}，如 F1-03）")
+            elif fid in seen_ids:
+                old_name, old_line = seen_ids[fid]
+                issues.append(f"第{old_line}行 [{old_name}] 与第{i + 1}行 [{name}] 伏笔 ID「{fid}」重复/处于多个生命周期")
+            else:
+                seen_ids[fid] = (name, i + 1)
             if name in ("超期", "活跃", "长线", "已回收") and cells[2] and not re.search(r"\d+", cells[2]):
                 issues.append(f"第{i + 1}行 [{name}] 埋设章节「{cells[2]}」无数字")
             if name == "活跃":
                 expect = cells[3]
                 if expect and not re.search(r"\d+", expect) and "卷" not in expect:
                     issues.append(f"第{i + 1}行 [活跃] 预期回收「{expect}」无法解析（应为章号或含「卷」）")
+            if name in ("超期", "活跃", "已回收"):
+                planted = _chapter_number(cells[2])
+                later = _chapter_number(cells[3])
+                if planted is not None and later is not None and later < planted:
+                    issues.append(f"第{i + 1}行 [{name}] 章节顺序冲突：{cells[3]} 早于埋设章节 {cells[2]}")
 
     for _, name, _ in LEDGER_SECTIONS:
         if name not in found:
@@ -118,6 +129,7 @@ def validate_quota(path):
 
     required = {"quota": False, "events": False, "gears": False}
     section = None
+    seen = {"quota": {}, "events": {}, "gears": {}}
     for i, line in enumerate(lines):
         h = re.match(r"^#{1,6}\s*(.+)", line)
         if h:
@@ -142,6 +154,11 @@ def validate_quota(path):
         if not re.search(r"\d+", cells[0]):
             issues.append(f"第{i + 1}行 [{section}] 章节列「{cells[0]}」无数字")
             continue
+        chapter = _chapter_number(cells[0])
+        if chapter is not None and chapter in seen[section]:
+            issues.append(f"第{seen[section][chapter]}行与第{i + 1}行 [{section}] 第{chapter}章记录重复")
+        elif chapter is not None:
+            seen[section][chapter] = i + 1
         if section == "quota":
             quota = cells[1] if len(cells) > 1 else ""
             letters = set(re.findall(r"[ABC]", quota))
@@ -170,13 +187,25 @@ def validate_summary(path):
         issues.append("缺少必备分节：近 10 章详记")
     # 逐条 ### 第N章 检查七个必填字段
     entries = list(re.finditer(r"^###\s*第\s*(\d+)\s*章.*$", text, re.M))
+    seen_chapters = {}
     for idx, m in enumerate(entries):
+        chapter = int(m.group(1))
+        line = text.count("\n", 0, m.start()) + 1
+        if chapter in seen_chapters:
+            issues.append(f"第{seen_chapters[chapter]}行与第{line}行 第{chapter}章摘要重复")
+        else:
+            seen_chapters[chapter] = line
         start = m.end()
         end = entries[idx + 1].start() if idx + 1 < len(entries) else len(text)
         body = text[start:end]
         for field in SUMMARY_REQUIRED_FIELDS:
-            if field not in body:
+            match = re.search(
+                rf"(?m)^\s*[-*]?\s*(?:\*\*)?{re.escape(field)}(?:\*\*)?\s*[：:]\s*(.*?)\s*$",
+                body)
+            if not match:
                 issues.append(f"第{m.group(1)}章摘要条目缺字段：{field}")
+            elif not match.group(1).strip():
+                issues.append(f"第{m.group(1)}章摘要条目字段为空：{field}")
     return issues
 
 
@@ -184,10 +213,16 @@ def validate_character_state(path):
     issues = []
     text = _read(path)
     entries = list(re.finditer(r"^##\s*(.+?)\s*$", text, re.M))
+    seen_names = {}
     for idx, m in enumerate(entries):
         name = m.group(1)
         if "{" in name:  # 模板占位行
             continue
+        line = text.count("\n", 0, m.start()) + 1
+        if name in seen_names:
+            issues.append(f"第{seen_names[name]}行与第{line}行 角色标题「{name}」重复")
+        else:
+            seen_names[name] = line
         start = m.end()
         end = entries[idx + 1].start() if idx + 1 < len(entries) else len(text)
         body = text[start:end]
@@ -195,6 +230,12 @@ def validate_character_state(path):
             if field not in body:
                 issues.append(f"角色「{name}」缺字段：{field}")
     return issues
+
+
+def _chapter_number(value):
+    """Return a chapter number only for an unambiguous chapter label."""
+    match = re.fullmatch(r"\s*(?:第\s*)?(\d+)\s*(?:章)?\s*", value)
+    return int(match.group(1)) if match else None
 
 
 def validate_timeline(path):

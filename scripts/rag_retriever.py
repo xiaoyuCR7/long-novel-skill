@@ -12,6 +12,7 @@ import re
 import sys
 import time
 from collections import Counter
+from contextlib import contextmanager
 
 # --- 从 common.py 导入共享 BM25 实现 ---
 _SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -19,7 +20,9 @@ if _SCRIPT_DIR not in sys.path:
     sys.path.insert(0, _SCRIPT_DIR)
 try:
     from common import (BM25Index, tokenize_chinese, load_char_names,
-                        extract_summary_fields, recency_boost, prune_cache)
+                        extract_summary_fields, recency_boost, prune_cache,
+                        atomic_write_json, SUMMARY_PARSER_VERSION,
+                        canonical_read_lock)
     _USE_COMMON = True
 except ImportError:
     _USE_COMMON = False
@@ -28,13 +31,20 @@ except ImportError:
         return {"summary": "", "entities": [], "emotion_tags": []}
     def recency_boost(c, cur, decay=0.02): return 1.0
     def prune_cache(cache, **kw): return cache
+    def atomic_write_json(path, data, indent=2):
+        with open(path, "w", encoding="utf-8") as f: json.dump(data, f, ensure_ascii=False, indent=indent)
+        return True
+    @contextmanager
+    def canonical_read_lock(book_root):
+        yield
+    SUMMARY_PARSER_VERSION = "fallback"
 
 RAG_INDEX_FILE = "rag_index.json"
 RAG_CACHE_FILE = "rag_cache.json"
 NEXT_PLOT_CTX_FILE = "next_plot_context.md"
 BM25_K1 = 1.5
 BM25_B = 0.75
-INDEX_VERSION = "1.0.1"
+INDEX_VERSION = "1.1.0"
 
 LIGHT_SCENE_KEYWORDS = [
     "赶路", "过场", "日常", "过渡", "转场", "路途", "行路",
@@ -87,16 +97,13 @@ def _parse_entities(field_text):
 
 
 def _extract_emotion_tags(text):
-    m = EMOTION_FIELD_RE.search(text)
-    if not m: return []
-    raw = m.group(1).strip()
-    tags = re.split(r"[，,、/；;]+", raw)
-    return [t.strip() for t in tags if t.strip() and len(t.strip()) <= 10]
+    return extract_summary_fields(text).get("emotion_tags", [])
 
 
 def _extract_summary_text(text):
-    m = SUMMARY_FIELD_RE.search(text)
-    if m: return m.group(1).strip().strip("。 ")
+    summary = extract_summary_fields(text).get("summary", "")
+    if summary:
+        return summary
     lines = text.split("\n")
     for line in lines:
         line = line.strip()
@@ -234,9 +241,7 @@ def load_rag_index(book_root):
 
 def save_rag_index(book_root, index_data):
     path = _rag_index_path(book_root)
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(index_data, f, ensure_ascii=False, indent=2)
+    atomic_write_json(path, index_data)
 
 
 def _migrate_legacy_index(book_root, old_index):
@@ -270,9 +275,7 @@ def load_rag_cache(book_root):
 
 def save_rag_cache(book_root, cache):
     path = _rag_cache_path(book_root)
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(cache, f, ensure_ascii=False, indent=2)
+    atomic_write_json(path, cache)
 
 
 def _cache_key(query, top_k, light=False, index_hash="", current_chapter=None):
@@ -283,7 +286,10 @@ def _cache_key(query, top_k, light=False, index_hash="", current_chapter=None):
 
 def _index_hash(index_data):
     if not index_data: return ""
-    raw = f"{index_data.get('last_updated', '')}|{index_data.get('total_chapters', 0)}|{index_data.get('indexed_chapters', 0)}"
+    raw = json.dumps({"version": index_data.get("version"), "chapters": [
+        {"chapter": ch.get("chapter"), "fingerprint": ch.get("fingerprint", "")}
+        for ch in index_data.get("chapters", [])
+    ]}, ensure_ascii=False, sort_keys=True)
     return hashlib.md5(raw.encode("utf-8")).hexdigest()[:16]
 
 
@@ -313,10 +319,44 @@ def _scan_summary_entries(book_root):
         chap = int(m.group(1)); start = m.start()
         end = entries[idx + 1].start() if idx + 1 < len(entries) else len(text)
         result[chap] = text[start:end]
+    volume_re = re.compile(r"^##\s*第\s*(\d+)\s*[-—]\s*(?:第\s*)?(\d+)\s*章\s*回顾压缩\s*$", re.M)
+    for match in volume_re.finditer(text):
+        next_heading = re.search(r"^#{2,3}\s+", text[match.end():], re.M)
+        end = match.end() + next_heading.start() if next_heading else len(text)
+        block = text[match.start():end]
+        start_chapter, end_chapter = int(match.group(1)), int(match.group(2))
+        for chap in range(start_chapter, end_chapter + 1):
+            result.setdefault(chap, block)
     return result
 
 
+def _entry_fingerprint(file_path, summary_block, book_root, chapter):
+    """索引条目身份包含正文、精确摘要块、元数据和解析契约版本。"""
+    digest = hashlib.sha256()
+    for label, value in (("prose", _read_bytes(file_path)),
+                         ("summary", (summary_block or "").encode("utf-8")),
+                         ("metadata", _read_bytes(os.path.join(
+                             book_root, "追踪", "chapter_meta", f"第{chapter}章.meta.json"))),
+                         ("parser", SUMMARY_PARSER_VERSION.encode("utf-8")),
+                         ("index", INDEX_VERSION.encode("utf-8"))):
+        digest.update(label.encode("ascii") + b"\0" + value + b"\0")
+    return digest.hexdigest()
+
+
+def _read_bytes(path):
+    try:
+        with open(path, "rb") as f:
+            return f.read()
+    except OSError:
+        return b""
+
+
 def cmd_build(book_root):
+    with canonical_read_lock(book_root):
+        return _cmd_build_unlocked(book_root)
+
+
+def _cmd_build_unlocked(book_root):
     chapters = _scan_chapters(book_root)
     if not chapters: print("错误：正文目录下未找到章节文件", file=sys.stderr); return 2
     summary_entries = _scan_summary_entries(book_root)
@@ -336,6 +376,7 @@ def cmd_build(book_root):
             char_count = len(re.sub(r"\s+", "", content))
         except (OSError, ValueError): char_count = 0
         entry_body = summary_entries.get(chap, "")
+        fingerprint = _entry_fingerprint(file_path, entry_body, book_root, chap)
         fields = extract_summary_fields(entry_body, char_names)
         summary_text = fields["summary"]
         entities = fields["entities"]
@@ -347,11 +388,11 @@ def cmd_build(book_root):
             if tm2 and tm2.group(2): title = tm2.group(2).strip()
         if not title: title = f"第{chap}章"
         old_entry = old_chapters.get(chap)
-        if old_entry and old_entry.get("content_hash") == content_hash:
+        if old_entry and old_entry.get("fingerprint") == fingerprint:
             new_entries.append(old_entry); skipped += 1; continue
         entry = {"chapter": chap, "title": title, "file": os.path.relpath(file_path, book_root).replace("\\", "/"),
                   "summary": summary_text, "entities": entities, "char_count": char_count,
-                  "emotion_tags": emotion_tags, "content_hash": content_hash,
+                  "emotion_tags": emotion_tags, "content_hash": content_hash, "fingerprint": fingerprint,
                   "indexed_at": time.strftime("%Y-%m-%dT%H:%M:%S")}
         new_entries.append(entry); updated += 1
     new_entries.sort(key=lambda x: x["chapter"])
@@ -420,8 +461,9 @@ def rag_query(book_root, query, top_k=5, light=False, current_chapter=None):
                                 "snippet": ch.get("summary", "")[:200],
                                 "relevance": _relevance_label(score)})
         results.sort(key=lambda x: -x["score"]); results = results[:top_k]
-        return {"query": query, "triggered": True, "cache_hit": False, "light_mode": True,
-                "results": results, "context_suggestion": None}
+        if results:
+            return {"query": query, "triggered": True, "cache_hit": False, "light_mode": True,
+                    "results": results, "context_suggestion": None}
     docs = []
     for ch in chapters:
         docs.append((ch["chapter"], _weighted_doc(ch)))

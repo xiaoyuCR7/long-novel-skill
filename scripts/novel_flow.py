@@ -31,13 +31,16 @@ Agent 负责"写"，本脚本负责"前后脚的确定性问题"。
 """
 
 import argparse
+import hashlib
 import json
 import os
 import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
+import uuid
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -74,9 +77,8 @@ SNAPSHOT_TRACKING_FILES = [
     "伏笔台账.md",
     "角色状态.md",
     "章节摘要.md",
+    "时间线.md",
     "节奏配额.md",
-    "entity_index.json",
-    "story_graph.json",
 ]
 
 # =========================================================
@@ -384,8 +386,38 @@ def _snapshot_dir(book_dir: Path) -> Path:
     return book_dir / FLOW_SNAPSHOT_DIR
 
 
-def create_snapshot(book_dir: Path) -> Optional[str]:
+def _snapshot_manifest(snapshot_path: Path) -> Tuple[bool, str]:
+    """Validate the complete five-table snapshot contract before using it."""
+    try:
+        manifest = json.loads((snapshot_path / "manifest.json").read_text(encoding="utf-8"))
+        files = manifest["files"]
+        if not isinstance(files, dict) or set(files) != set(SNAPSHOT_TRACKING_FILES):
+            raise ValueError("file manifest mismatch")
+        for filename in SNAPSHOT_TRACKING_FILES:
+            source = snapshot_path / filename
+            if not source.is_file() or files[filename] != hashlib.sha256(source.read_bytes()).hexdigest():
+                raise ValueError("hash mismatch: " + filename)
+    except (OSError, ValueError, TypeError, KeyError, json.JSONDecodeError) as exc:
+        return False, "快照完整性校验失败: " + str(exc)
+    return True, ""
+
+
+def create_snapshot(book_dir: Path, cleanup: bool = True) -> Optional[str]:
+    """Create a coherent snapshot while sharing the chapter-transaction lock."""
+    from chapter_transaction import TransactionError, pending_transaction, transaction_lock
+    try:
+        with transaction_lock(book_dir):
+            if pending_transaction(book_dir):
+                return None
+            return _create_snapshot_locked(book_dir, cleanup)
+    except (TransactionError, OSError):
+        return None
+
+
+def _create_snapshot_locked(book_dir: Path, cleanup: bool = True) -> Optional[str]:
     """创建追踪文件快照。
+
+    Caller must hold ``chapter_transaction.transaction_lock``.
 
     如同一秒内已存在快照，自动追加序号后缀（_2, _3, ...）以保证唯一。
 
@@ -396,6 +428,7 @@ def create_snapshot(book_dir: Path) -> Optional[str]:
     snapshot_root = _snapshot_dir(book_dir)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     snapshot_path = snapshot_root / f"snapshot_{timestamp}"
+    snapshot_root.mkdir(parents=True, exist_ok=True)
 
     # 冲突检测：同一秒内已存在快照则追加序号后缀
     if snapshot_path.exists():
@@ -408,31 +441,91 @@ def create_snapshot(book_dir: Path) -> Optional[str]:
                 break
             idx += 1
 
-    # 确保快照目录存在
-    snapshot_path.mkdir(parents=True, exist_ok=True)
-
-    copied = []
-    for filename in SNAPSHOT_TRACKING_FILES:
-        src = tracking_dir / filename
-        if src.exists():
-            try:
-                shutil.copy2(str(src), str(snapshot_path / filename))
-                copied.append(filename)
-            except OSError:
-                pass
-
-    if not copied:
-        # 没有任何文件被备份，删除空快照目录
-        try:
-            snapshot_path.rmdir()
-        except OSError:
-            pass
+    temporary_path = Path(tempfile.mkdtemp(prefix=".snapshot-", dir=str(snapshot_root)))
+    try:
+        hashes = {}
+        for filename in SNAPSHOT_TRACKING_FILES:
+            src = tracking_dir / filename
+            if not src.is_file():
+                return None
+            destination = temporary_path / filename
+            shutil.copy2(str(src), str(destination))
+            hashes[filename] = hashlib.sha256(destination.read_bytes()).hexdigest()
+        (temporary_path / "manifest.json").write_text(
+            json.dumps({"version": 1, "files": hashes}, ensure_ascii=False, indent=2), encoding="utf-8")
+        valid, _ = _snapshot_manifest(temporary_path)
+        if not valid:
+            return None
+        os.replace(str(temporary_path), str(snapshot_path))
+    except OSError:
         return None
+    finally:
+        if temporary_path.exists():
+            shutil.rmtree(str(temporary_path), ignore_errors=True)
 
-    # 清理超出数量上限的旧快照
-    _cleanup_old_snapshots(snapshot_root)
-
+    if cleanup:
+        _cleanup_old_snapshots(snapshot_root)
     return timestamp
+
+
+def _restore_journal_path(book_dir: Path) -> Path:
+    return Path(book_dir).resolve() / ".snapshot-restore.json"
+
+
+def _write_restore_journal(book_dir: Path, state: Dict[str, Any]) -> None:
+    from common import atomic_write_json
+    atomic_write_json(_restore_journal_path(book_dir), state)
+
+
+def _restore_private_child(book_dir: Path, name: str, prefix: str) -> Path:
+    root = Path(book_dir).resolve()
+    if Path(name).name != name or not name.startswith(prefix):
+        raise ValueError("unsafe restore path")
+    path = root / name
+    if path.is_symlink() or path.resolve().parent != root:
+        raise ValueError("unsafe restore path")
+    return path
+
+
+def _recover_interrupted_snapshot_restore(book_dir: Path) -> Tuple[bool, str]:
+    """Roll back an unfinished directory swap using its root-level journal."""
+    journal_path = _restore_journal_path(book_dir)
+    if not journal_path.exists():
+        return True, ""
+    try:
+        state = json.loads(journal_path.read_text(encoding="utf-8"))
+        if (set(state) != {"version", "status", "snapshot", "backup", "stage"}
+                or state["version"] != 1
+                or state["status"] not in {"prepared", "tracking_moved", "installed"}
+                or not re.fullmatch(r"\d{8}_\d{6}(?:_\d+)?", state["snapshot"])):
+            raise ValueError("invalid restore journal")
+        backup = _restore_private_child(book_dir, state["backup"], ".tracking-restore-")
+        stage_root = _restore_private_child(book_dir, state["stage"], ".restore-")
+        tracking = Path(book_dir).resolve() / "追踪"
+        if backup.exists():
+            if not backup.is_dir():
+                raise ValueError("restore backup is not a directory")
+            if tracking.exists():
+                quarantine = Path(book_dir).resolve() / (".restore-abandoned-" + uuid.uuid4().hex)
+                os.replace(str(tracking), str(quarantine))
+                try:
+                    os.replace(str(backup), str(tracking))
+                except OSError:
+                    os.replace(str(quarantine), str(tracking))
+                    raise
+                shutil.rmtree(str(quarantine), ignore_errors=True)
+            else:
+                os.replace(str(backup), str(tracking))
+        elif not tracking.is_dir():
+            raise ValueError("tracking directory and restore backup are both missing")
+        if stage_root.exists():
+            if stage_root.is_symlink() or not stage_root.is_dir():
+                raise ValueError("unsafe restore stage")
+            shutil.rmtree(str(stage_root))
+        journal_path.unlink()
+        return True, "已回滚上次中断的快照恢复"
+    except (OSError, ValueError, KeyError, TypeError, json.JSONDecodeError) as exc:
+        return False, "中断恢复日志无法安全处理: " + str(exc)
 
 
 def _cleanup_old_snapshots(snapshot_root: Path) -> None:
@@ -492,39 +585,66 @@ def restore_snapshot(book_dir: Path, timestamp: str) -> Tuple[bool, str]:
     Returns:
         (success, message)
     """
-    snapshot_root = _snapshot_dir(book_dir)
-    snapshot_path = snapshot_root / f"snapshot_{timestamp}"
-
-    if not snapshot_path.exists():
-        return False, f"快照不存在: snapshot_{timestamp}"
-
-    # 安全网：恢复前备份当前状态
-    safety_ts = create_snapshot(book_dir)
-    safety_info = ""
-    if safety_ts:
-        safety_info = f"（当前状态已安全备份为 snapshot_{safety_ts}）"
-
-    # 恢复文件
-    tracking_dir = book_dir / "追踪"
-    restored = []
-    missing_in_snapshot = []
-    for filename in SNAPSHOT_TRACKING_FILES:
-        src = snapshot_path / filename
-        if src.exists():
-            try:
-                shutil.copy2(str(src), str(tracking_dir / filename))
-                restored.append(filename)
-            except OSError as e:
-                return False, f"恢复 {filename} 失败: {e}"
-        else:
-            missing_in_snapshot.append(filename)
-
-    msg = f"已从 snapshot_{timestamp} 恢复 {len(restored)} 个文件: {', '.join(restored)}"
-    if missing_in_snapshot:
-        msg += f"\n跳过（快照中不存在）: {', '.join(missing_in_snapshot)}"
-    msg += safety_info
-
-    return True, msg
+    if not re.fullmatch(r"\d{8}_\d{6}(?:_\d+)?", timestamp or ""):
+        return False, "快照时间戳格式不合法"
+    from chapter_transaction import TransactionError, pending_transaction, recovery_command, transaction_lock
+    locked = False
+    stage_root = backup_dir = None
+    try:
+        with transaction_lock(book_dir):
+            recovered, recovery_error = _recover_interrupted_snapshot_restore(book_dir)
+            if not recovered:
+                return False, recovery_error
+            if pending_transaction(book_dir):
+                return False, "transaction_incomplete: " + recovery_command(book_dir)
+            snapshot_path = _snapshot_dir(book_dir) / f"snapshot_{timestamp}"
+            valid, error = _snapshot_manifest(snapshot_path)
+            if not valid:
+                return False, error
+            safety_ts = _create_snapshot_locked(book_dir, cleanup=False)
+            if not safety_ts:
+                return False, "无法创建恢复前安全快照"
+            locked, lock_error = _acquire_lock_inner(book_dir, "rollback", None)
+            if not locked:
+                return False, lock_error
+            tracking_dir = Path(book_dir).resolve() / "追踪"
+            stage_root = Path(tempfile.mkdtemp(prefix=".restore-", dir=str(Path(book_dir).resolve())))
+            staged_tracking = stage_root / "追踪"
+            backup_dir = Path(book_dir).resolve() / (".tracking-restore-" + uuid.uuid4().hex)
+            shutil.copytree(str(tracking_dir), str(staged_tracking))
+            for filename in SNAPSHOT_TRACKING_FILES:
+                shutil.copy2(str(snapshot_path / filename), str(staged_tracking / filename))
+            journal = {"version": 1, "status": "prepared", "snapshot": timestamp,
+                       "backup": backup_dir.name, "stage": stage_root.name}
+            _write_restore_journal(book_dir, journal)
+            os.replace(str(tracking_dir), str(backup_dir))
+            journal["status"] = "tracking_moved"
+            _write_restore_journal(book_dir, journal)
+            os.replace(str(staged_tracking), str(tracking_dir))
+            journal["status"] = "installed"
+            _write_restore_journal(book_dir, journal)
+            shutil.rmtree(str(backup_dir))
+            _restore_journal_path(book_dir).unlink()
+            if stage_root.exists():
+                shutil.rmtree(str(stage_root))
+            _cleanup_old_snapshots(_snapshot_dir(book_dir))
+            return True, (f"已从 snapshot_{timestamp} 原子恢复 {len(SNAPSHOT_TRACKING_FILES)} 个文件: "
+                          f"{', '.join(SNAPSHOT_TRACKING_FILES)}"
+                          f"（当前状态已安全备份为 snapshot_{safety_ts}）")
+    except (TransactionError, OSError, ValueError) as exc:
+        try:
+            with transaction_lock(book_dir):
+                recovered, recovery_error = _recover_interrupted_snapshot_restore(book_dir)
+        except (TransactionError, OSError) as recovery_lock_error:
+            recovered = False
+            recovery_error = "无法取得恢复互斥锁: " + str(recovery_lock_error)
+        suffix = "" if recovered else "；" + recovery_error
+        return False, f"恢复快照失败: {exc}{suffix}"
+    finally:
+        if stage_root is not None and stage_root.exists() and not _restore_journal_path(book_dir).exists():
+            shutil.rmtree(str(stage_root), ignore_errors=True)
+        if locked:
+            release_lock(book_dir)
 
 
 # =========================================================
@@ -622,6 +742,62 @@ def cmd_prepare(book_dir: Path, chapter: int, args) -> Dict[str, Any]:
         release_lock(book_dir)
 
 
+def _prepare_query_and_entity(book_dir: Path, chapter: int, brief: str) -> Tuple[Optional[str], Optional[str]]:
+    """Extract a human-authored retrieval query and graph node from the target outline/brief."""
+    outline_text = ""
+    outline_dir = book_dir / "大纲"
+    if outline_dir.exists():
+        for path in outline_dir.glob("章纲_第*章*.md"):
+            match = re.search(r"第\s*0*(\d+)\s*章", path.name)
+            if match and int(match.group(1)) == chapter:
+                outline_text = read_file_safe(path)
+                break
+    source = outline_text + "\n" + (brief or "")
+
+    def value_for(labels: str) -> Optional[str]:
+        match = re.search(r"(?:" + labels + r")\s*[：:]\s*([^\n#]+)", source)
+        if not match:
+            return None
+        value = re.sub(r"^[\s>*-]+", "", match.group(1)).strip()
+        return value or None
+
+    query = value_for(r"本章(?:目标|概要|剧情|任务)|章节目标|核心冲突")
+    if not query:
+        section = re.search(r"^#{2,}\s*核心事件\s*$([\s\S]*?)(?=^#{1,}\s|\Z)", source, re.M)
+        if section:
+            for line in section.group(1).splitlines():
+                candidate = re.sub(r"^[\s>*-]+", "", line).strip()
+                if candidate and not (candidate.startswith("（") and candidate.endswith("）")):
+                    query = candidate
+                    break
+    entity_value = value_for(r"关键实体|主要角色|出场角色|出场人物|实体")
+    if not entity_value:
+        section = re.search(r"^#{2,}\s*出场人物\s*$([\s\S]*?)(?=^#{1,}\s|\Z)", source, re.M)
+        if section:
+            match = re.search(r"(?:主要|次要|角色|人物)\s*[：:]\s*([^\n#]+)", section.group(1))
+            entity_value = match.group(1).strip() if match else None
+    entity_match = re.search(r"[\u4e00-\u9fff]{2,8}", entity_value or "")
+    return query, entity_match.group(0) if entity_match else None
+
+
+def _is_explicit_zero_match(returncode: int, stdout: str, stderr: str, graph: bool = False) -> bool:
+    """Only known no-hit responses are nonblocking; invocation failures stay blocking."""
+    output = (stdout or "") + "\n" + (stderr or "")
+    if returncode == 1 and "未找到相关" in output:
+        return True
+    if graph and returncode == 0:
+        try:
+            return json.loads(stdout).get("matched") == []
+        except (json.JSONDecodeError, AttributeError, TypeError):
+            return False
+    return False
+
+
+def _skipped_prepare_step(name: str, reason: str, output: str = "") -> Dict[str, Any]:
+    return {"name": name, "success": True, "status": "skipped", "nonblocking": True,
+            "reason": reason, "output": output[:300]}
+
+
 def _cmd_prepare_inner(book_dir: Path, chapter: int, args) -> Dict[str, Any]:
     """prepare 命令核心逻辑"""
     result = {
@@ -669,17 +845,23 @@ def _cmd_prepare_inner(book_dir: Path, chapter: int, args) -> Dict[str, Any]:
         result["all_ready"] = False
         return result
 
-    # Step 4: 实体检索
-    rc, stdout, stderr = run_script(
-        "entity_index.py",
-        ["semantic", str(book_dir), "--chapter", str(chapter)],
-        book_dir
-    )
-    result["steps"].append({
-        "name": "entity_retrieval",
-        "success": rc == 0,
-        "output": stdout[:300] if stdout else stderr[:200],
-    })
+    query, entity = _prepare_query_and_entity(book_dir, chapter, stdout)
+
+    # Step 4: 实体检索（CLI 的查询参数是位置参数，不接受 --chapter）
+    if not query:
+        result["steps"].append(_skipped_prepare_step("entity_retrieval", "目标章章纲/brief 未提供查询"))
+    else:
+        rc, stdout, stderr = run_script(
+            "entity_index.py", ["semantic", str(book_dir), query], book_dir
+        )
+        if _is_explicit_zero_match(rc, stdout, stderr):
+            result["steps"].append(_skipped_prepare_step("entity_retrieval", "实体检索零命中", stdout or stderr))
+        else:
+            result["steps"].append({
+                "name": "entity_retrieval",
+                "success": rc == 0,
+                "output": stdout[:300] if stdout else stderr[:200],
+            })
 
     # Step 5: 事件推荐
     rc, stdout, stderr = run_script(
@@ -693,17 +875,21 @@ def _cmd_prepare_inner(book_dir: Path, chapter: int, args) -> Dict[str, Any]:
         "output": stdout[:300] if stdout else stderr[:200],
     })
 
-    # Step 6: 知识图谱查询
-    rc, stdout, stderr = run_script(
-        "story_graph.py",
-        ["query", str(book_dir), "--chapter", str(chapter)],
-        book_dir
-    )
-    result["steps"].append({
-        "name": "graph_query",
-        "success": rc == 0,
-        "output": stdout[:300] if stdout else stderr[:200],
-    })
+    # Step 6: 知识图谱查询（节点同样是位置参数）
+    if not entity:
+        result["steps"].append(_skipped_prepare_step("graph_query", "目标章章纲/brief 未提供实体"))
+    else:
+        rc, stdout, stderr = run_script(
+            "story_graph.py", ["query", str(book_dir), entity], book_dir
+        )
+        if _is_explicit_zero_match(rc, stdout, stderr, graph=True):
+            result["steps"].append(_skipped_prepare_step("graph_query", "图谱查询零命中", stdout or stderr))
+        else:
+            result["steps"].append({
+                "name": "graph_query",
+                "success": rc == 0,
+                "output": stdout[:300] if stdout else stderr[:200],
+            })
 
     # Step 7: 情节建议（基于记忆的下一章方向参考）
     rc, stdout, stderr = run_script(
@@ -815,6 +1001,19 @@ def _cmd_check_inner(book_dir: Path, chapter: int, chapter_file: str) -> Dict[st
 
 
 def cmd_track(book_dir: Path, chapter: int) -> Dict[str, Any]:
+    """track 命令 — 不得绕过未完成的 chapter transaction。"""
+    from chapter_transaction import TransactionError, pending_transaction, recovery_command, transaction_lock
+    try:
+        with transaction_lock(book_dir):
+            if pending_transaction(book_dir):
+                return {"chapter": chapter, "steps": [], "all_done": False,
+                        "error": "transaction_incomplete: " + recovery_command(book_dir)}
+            return _cmd_track_inner(book_dir, chapter)
+    except (TransactionError, OSError) as exc:
+        return {"chapter": chapter, "steps": [], "all_done": False, "error": str(exc)}
+
+
+def _cmd_track_inner(book_dir: Path, chapter: int) -> Dict[str, Any]:
     """track 命令 — 追踪更新"""
     result = {
         "chapter": chapter,

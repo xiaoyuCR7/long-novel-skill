@@ -11,6 +11,7 @@ import json
 import os
 import re
 import sys
+from contextlib import contextmanager
 
 ENTRY_RE = re.compile(r"^#{2,3}\s*第\s*(\d+)\s*章.*$", re.M)
 ENTITY_FIELD_RE = re.compile(r"关键实体[：:](.*?)(?:\n\s*-\s|\n###|\Z)", re.S)
@@ -22,7 +23,8 @@ if _SCRIPT_DIR not in sys.path:
 
 try:
     from common import (BM25Index, tokenize_chinese, load_char_names,
-                        extract_summary_fields, prune_cache)
+                        extract_summary_fields, prune_cache, atomic_write_json,
+                        canonical_read_lock)
     _USE_COMMON = True
 except ImportError:
     _USE_COMMON = False
@@ -30,6 +32,12 @@ except ImportError:
     def extract_summary_fields(body, char_names=None):
         return {"summary": "", "entities": [], "emotion_tags": []}
     def prune_cache(cache, **kw): return cache
+    def atomic_write_json(path, data, indent=2):
+        with open(path, "w", encoding="utf-8") as f: json.dump(data, f, ensure_ascii=False, indent=indent)
+        return True
+    @contextmanager
+    def canonical_read_lock(book_root):
+        yield
 
 import math
 import time
@@ -68,6 +76,11 @@ def parse_entities(field_text):
 
 
 def build_index(book_root):
+    with canonical_read_lock(book_root):
+        return _build_index_unlocked(book_root)
+
+
+def _build_index_unlocked(book_root):
     summary = os.path.join(book_root, "追踪", "章节摘要.md")
     if not os.path.isfile(summary):
         raise FileNotFoundError(f"章节摘要.md 不存在：{summary}")
@@ -89,8 +102,7 @@ def build_index(book_root):
     for ent in index:
         index[ent].sort()
     out_path = os.path.join(book_root, "追踪", "entity_index.json")
-    with open(out_path, "w", encoding="utf-8") as f:
-        json.dump(index, f, ensure_ascii=False, indent=2)
+    atomic_write_json(out_path, index)
     return index, out_path, len(entries)
 
 
@@ -212,10 +224,11 @@ def _cache_key(queries, top_k, light=False, index_hash=""):
 
 
 def _index_sig(book_root):
-    """entity_index.json 的 mtime 签名，用于缓存失效（索引重建后自动失效）。"""
+    """实体索引内容签名，用于缓存失效。"""
     p = os.path.join(book_root, "追踪", "entity_index.json")
     try:
-        return str(os.path.getmtime(p))
+        with open(p, "rb") as f:
+            return hashlib.md5(f.read()).hexdigest()
     except OSError:
         return ""
 
@@ -230,9 +243,7 @@ def load_query_cache(book_root):
 
 def save_query_cache(book_root, cache):
     path = _query_cache_path(book_root)
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(cache, f, ensure_ascii=False, indent=2)
+    atomic_write_json(path, cache)
 
 
 def is_light_scene(queries):
@@ -267,6 +278,11 @@ def _recency_boost(chapter_num, current_chapter, decay=0.02):
 
 
 def semantic_search(book_root, queries, top_k=5, light=False):
+    with canonical_read_lock(book_root):
+        return _semantic_search_unlocked(book_root, queries, top_k, light)
+
+
+def _semantic_search_unlocked(book_root, queries, top_k=5, light=False):
     summary_path = os.path.join(book_root, "追踪", "章节摘要.md")
     if not os.path.isfile(summary_path):
         raise FileNotFoundError(f"章节摘要.md 不存在：{summary_path}")
@@ -284,8 +300,9 @@ def semantic_search(book_root, queries, top_k=5, light=False):
                         meta = load_chapter_meta(book_root, chap)
                         results.append((chap, 0.5, f"实体索引命中：{ent}", [(ent, 1)], meta))
             results.sort(key=lambda x: -x[1])
-            return results[:top_k]
-        return []
+            if results:
+                return results[:top_k]
+        # 自动轻场景的实体快速路径没有命中时，继续全量检索，避免因果查询丢失。
     docs = []; entry_data = []
     for idx, m in enumerate(entries):
         chap = int(m.group(1)); start = m.start()

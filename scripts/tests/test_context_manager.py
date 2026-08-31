@@ -84,6 +84,12 @@ class TestDetermineStage(unittest.TestCase):
         total = _estimate_total_chapters(self.root)
         self.assertIsNone(total)
 
+    def test_estimate_uses_largest_chapter_range_end(self):
+        """常见的“第1-50章”范围应优先于卷数回退估算。"""
+        (self.root / "大纲" / "总纲.md").write_text(
+            "第1卷：第1-50章\n第8卷：第951-1000章", encoding="utf-8")
+        self.assertEqual(_estimate_total_chapters(self.root), 1000)
+
 
 class TestGetDynamicBudgetRatios(unittest.TestCase):
     """测试预算比例获取。"""
@@ -413,6 +419,83 @@ class TestRequiredContext(unittest.TestCase):
     def test_empty_previous_summary_heading_is_not_reliable_context(self):
         self.write("追踪/章节摘要.md", "### 第1章 北站\n")
         self.assertFalse(select_context(self.root, 2).get("ready", True))
+
+    def test_formal_empty_previous_summary_fields_are_not_reliable_context(self):
+        fields = ("发生了什么", "状态变化", "伏笔进出", "新登场", "关键实体", "承上", "启下")
+        self.write("追踪/章节摘要.md", "### 第1章 北站\n" + "\n".join(
+            f"- {field}：" for field in fields))
+        result = select_context(self.root, 2)
+        self.assertFalse(result.get("ready", True))
+        self.assertIn("上一章正文或可靠摘要", " ".join(result["missing_required"]))
+
+    def test_pending_transaction_blocks_canonical_context_read(self):
+        from chapter_transaction import prepare
+        self.write("追踪/节奏配额.md", "# 节奏配额\n")
+        prepare(self.root, 2)
+        result = select_context(self.root, 2)
+        self.assertFalse(result["ready"])
+        self.assertIn("transaction_incomplete", result["errors"])
+
+    def test_context_holds_transaction_lock_for_entire_canonical_read(self):
+        import context_manager
+        import chapter_transaction
+        original = context_manager._required_context
+
+        def checked_required(*args, **kwargs):
+            with self.assertRaises(chapter_transaction.TransactionError):
+                with chapter_transaction.transaction_lock(self.root):
+                    pass
+            return original(*args, **kwargs)
+
+        with patch.object(context_manager, "_required_context", side_effect=checked_required):
+            self.assertTrue(select_context(self.root, 2)["ready"])
+
+    def test_entity_context_queries_brief_entities_in_historical_chapters(self):
+        self.write("追踪/entity_index.json", json.dumps(
+            {"铜钥匙": [1], "无关玉佩": [1], "未来物件": [3]}, ensure_ascii=False))
+        result = select_context(self.root, 2, max_chars=12000)
+        entity_context = result["components"]["entity_context"]["content"]
+        self.assertIn("铜钥匙", entity_context)
+        self.assertIn("1", entity_context)
+        self.assertNotIn("无关玉佩", entity_context)
+        self.assertNotIn("未来物件", entity_context)
+
+    def test_ready_brief_respects_real_serialized_budget(self):
+        result = select_context(self.root, 2, max_chars=1000)
+        brief_chars = count_chars(generate_brief_context(result))
+        if result["ready"]:
+            self.assertLessEqual(brief_chars, 1000)
+        else:
+            self.assertIn("required_context_over_budget", result["errors"])
+
+    def test_resolved_foreshadows_do_not_exhaust_required_budget(self):
+        resolved = "\n".join(
+            f"| F1-{i:03d} | 已结束旧秘密{i} | 第{i}章 | 第{i + 1}章 | 完成 |" for i in range(1, 180))
+        self.write("追踪/伏笔台账.md", "# 伏笔台账\n## ✅ 已回收\n" + resolved
+                   + "\n## 🟡 活跃\n| F9-01 | 铜钥匙不能开门 | 第1章 | 第9章 | 待回收 |")
+        result = select_context(self.root, 2, max_chars=2000)
+        self.assertTrue(result["ready"], result["errors"])
+        content = result["components"]["foreshadowing"]["content"]
+        self.assertIn("F9-01", content)
+        self.assertNotIn("F1-179", content)
+
+    def test_historical_timeline_rows_do_not_exhaust_required_budget(self):
+        history = "\n".join(
+            f"| 第{i}章 | 第{i}天 | 已结束事件{i} | 完成 |" for i in range(1, 180))
+        self.write("追踪/时间线.md", "# 时间线\n## 历史记录\n" + history
+                   + "\n## 当前时间锚点\n- 第2章：第二天上午，末班车还有两小时。")
+        result = select_context(self.root, 2, max_chars=2000)
+        self.assertTrue(result["ready"], result["errors"])
+        content = result["components"]["timeline"]["content"]
+        self.assertIn("第二天上午", content)
+        self.assertNotIn("已结束事件179", content)
+
+    def test_timeline_without_top_level_title_still_drops_history(self):
+        self.write("追踪/时间线.md", "## 历史记录\n已结束旧事。\n"
+                   "## 当前时间锚点\n第二天上午，末班车还有两小时。")
+        content = select_context(self.root, 2)["components"]["timeline"]["content"]
+        self.assertIn("第二天上午", content)
+        self.assertNotIn("已结束旧事", content)
 
     def test_mcp_context_argument_adapter_runs_real_cli(self):
         # Compile the pure argument adapter without optional MCP/pydantic imports.
@@ -851,6 +934,35 @@ class TestCompressSummaries(unittest.TestCase):
         """空章节列表返回提示。"""
         result = compress_summaries([], 1, 5)
         self.assertIn("无摘要数据", result)
+
+    def test_published_fields_survive_structured_volume_compression(self):
+        chapters = [{
+            "chapter": 1,
+            "char_count": 500,
+            "raw": (
+                "### 第1章：月门\n"
+                "- 发生了什么：林澈穿过废站并发现宗主伪造命令。\n"
+                "- 状态变化：林澈右手伤势加重。\n"
+                "- 伏笔进出：埋入 F1-99，月纹钥匙只能在子时使用。\n"
+                "- 新登场：守门人。\n"
+                "- 关键实体：月纹钥匙、废站。\n"
+                "- 承上：继续追查假命令。\n"
+                "- 启下：子时返回月门。"
+            ),
+        }]
+        result = compress_summaries(chapters, 1, 1)
+        for fact in ("宗主伪造命令", "右手伤势加重", "F1-99", "月纹钥匙", "子时"):
+            self.assertIn(fact, result)
+        self.assertIn("- 来源章节：1-1", result)
+
+    def test_each_legacy_chapter_contributes_a_fallback_event(self):
+        chapters = [
+            {"chapter": 1, "char_count": 20, "raw": "### 第1章\n林澈把钥匙藏进衣袋。"},
+            {"chapter": 2, "char_count": 20, "raw": "### 第2章\n唐序关闭北站闸门。"},
+        ]
+        result = compress_summaries(chapters, 1, 2)
+        self.assertIn("钥匙藏进衣袋", result)
+        self.assertIn("关闭北站闸门", result)
 
 
 if __name__ == "__main__":

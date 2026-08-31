@@ -455,6 +455,8 @@ class TestE2ENovelFlow(unittest.TestCase):
 
         summary = self.book_dir / "追踪" / "章节摘要.md"
         summary.write_text("初始摘要", encoding="utf-8")
+        for filename in ("角色状态.md", "时间线.md", "节奏配额.md"):
+            (self.book_dir / "追踪" / filename).write_text("初始" + filename, encoding="utf-8")
 
         # 1. 获取锁（需要 command 参数）
         locked, lock_msg = acquire_lock(self.book_dir, "write", 1)
@@ -468,6 +470,9 @@ class TestE2ENovelFlow(unittest.TestCase):
         ledger.write_text("修改后的内容 v2", encoding="utf-8")
         summary.write_text("修改后的摘要", encoding="utf-8")
 
+        # 回滚是独立的互斥操作，先结束写作锁。
+        release_lock(self.book_dir)
+
         # 4. 回滚
         restored, restore_msg = restore_snapshot(self.book_dir, ts)
         self.assertTrue(restored, f"应能恢复快照: {restore_msg}")
@@ -478,7 +483,7 @@ class TestE2ENovelFlow(unittest.TestCase):
         self.assertEqual(summary.read_text(encoding="utf-8"),
                          "初始摘要")
 
-        # 6. 释放锁（返回 None，不检查返回值）
+        # 6. 锁已在回滚前释放
         release_lock(self.book_dir)
         # 锁文件应已删除
         lock_file = self.book_dir / "追踪" / ".flow_lock.json"

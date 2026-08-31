@@ -43,7 +43,8 @@ class TestResume(unittest.TestCase):
     def native(self, gate=True):
         chapter = self.write("正文/第012章 归来.md")
         if gate:
-            self.write("追踪/门禁/gate_ch12.json", json.dumps({"passed": True,
+            self.write("追踪/门禁/gate_ch12.json", json.dumps({"chapter": 12,
+                "chapter_file": chapter.name, "passed": True,
                 "chapter_mtime": chapter.stat().st_mtime,
                 "chapter_sha256": hashlib.sha256(chapter.read_bytes()).hexdigest(),
                 "rhythm": {"passed": True}}).encode("utf-8"))
@@ -107,6 +108,31 @@ class TestResume(unittest.TestCase):
         self.assertFalse(report["ready"])
         self.assertTrue(any("门禁状态缺失" in d for d in report["debts"]))
         self.assertEqual(self.cli("--json").returncode, 1)
+
+    def test_incomplete_gate_cannot_authorize_resume(self):
+        self.native()
+        gate = self.book / "追踪/门禁/gate_ch12.json"
+        gate.write_text('{"passed": true}', encoding="utf-8")
+        report = self.report()
+        self.assertFalse(report["ready"])
+        self.assertTrue(any("门禁文件不完整" in debt for debt in report["debts"]), report)
+
+    def test_gate_identity_hash_and_rhythm_must_match(self):
+        chapter = self.native()
+        gate_path = self.book / "追踪/门禁/gate_ch12.json"
+        valid = json.loads(gate_path.read_text(encoding="utf-8"))
+        variants = (
+            dict(valid, chapter=11),
+            dict(valid, chapter_file="第012章 另一稿.md"),
+            dict(valid, chapter_sha256="0" * 64),
+            {key: value for key, value in valid.items() if key != "rhythm"},
+            dict(valid, rhythm={"passed": False}),
+        )
+        for state in variants:
+            with self.subTest(state=state):
+                gate_path.write_text(json.dumps(state), encoding="utf-8")
+                debts, _ = resume.check_gate(str(self.book), 12, str(chapter))
+                self.assertTrue(debts)
 
     def test_native_revised_chapter_still_requires_gate(self):
         chapter = self.native()

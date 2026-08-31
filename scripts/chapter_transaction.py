@@ -20,8 +20,14 @@ import uuid
 
 TRACKING = ("章节摘要.md", "角色状态.md", "伏笔台账.md", "时间线.md", "节奏配额.md")
 AREA = "追踪/.chapter-transactions"
-LOCK = "追踪/.chapter-transaction.lock"
+# The lock must not live inside ``追踪``: snapshot rollback replaces that
+# directory, and a directory-local Windows lock cannot remain held across the
+# swap.  A hidden root-private path is also excluded by ``book_hashes``.
+LOCK = ".chapter-transaction.lock"
+SNAPSHOT_RESTORE_JOURNAL = ".snapshot-restore.json"
 TERMINAL = {"committed", "recovered"}
+JOURNAL_SCHEMA_VERSION = 1
+ARCHIVE_RETENTION = 3
 SCRIPTS = Path(__file__).resolve().parent
 
 
@@ -126,24 +132,75 @@ def _current(book):
     return _safe(book, AREA + "/current")
 
 
+def _is_hash(value, allow_none=False):
+    return (allow_none and value is None) or (isinstance(value, str) and re.fullmatch(r"[0-9a-f]{64}", value) is not None)
+
+
+def _validate_hash_map(value, expected=None, allow_none=False):
+    if not isinstance(value, dict) or (expected is not None and set(value) != set(expected)):
+        raise ValueError("hash manifest mismatch")
+    if not all(isinstance(path, str) and _is_hash(digest, allow_none) for path, digest in value.items()):
+        raise ValueError("invalid hash manifest")
+
+
+def _validate_journal(value):
+    if not isinstance(value, dict):
+        raise ValueError("journal is not an object")
+    status = value.get("status")
+    if status not in TERMINAL | {"preparing", "prepared", "validated", "committing", "recovering"}:
+        raise ValueError("unknown status")
+    version = value.get("schema_version")
+    if version is None:
+        # Earlier journals have no complete schema.  Only a fully-described
+        # in-progress commit has enough information for a safe rollback.
+        if status not in {"committing", "recovering"}:
+            raise ValueError("unversioned journal is not safely recoverable")
+    elif version != JOURNAL_SCHEMA_VERSION:
+        raise ValueError("unknown schema version")
+    expected = _targets(value["chapter"], value["chapter_file"])
+    required = {"status", "chapter", "chapter_file", "stage_root", "checkpoint_root", "targets", "before", "baseline"}
+    if version is not None:
+        required.add("schema_version")
+    validated = {"validated", "committing", "recovering", "committed"}
+    has_validation = status in validated or (
+        status == "recovered" and ("after" in value or "validated_hashes" in value)
+    )
+    if has_validation:
+        required |= {"after", "validated_hashes"}
+    if set(value) != required:
+        raise ValueError("journal key set mismatch")
+    if value["targets"] != expected:
+        raise ValueError("target manifest mismatch")
+    if not isinstance(value["stage_root"], str) or not isinstance(value["checkpoint_root"], str):
+        raise ValueError("invalid journal roots")
+    _validate_hash_map(value["before"], expected, allow_none=True)
+    _validate_hash_map(value["baseline"])
+    if has_validation:
+        _validate_hash_map(value["after"], expected)
+        _validate_hash_map(value["validated_hashes"])
+
+
 def load_journal(book):
     current = _current(book)
     try:
         value = json.loads((current / "journal.json").read_text(encoding="utf-8"))
-        expected = _targets(value["chapter"], value["chapter_file"])
-        if value["targets"] != expected or set(value["before"]) != set(expected):
-            raise ValueError("target manifest mismatch")
-        if value["status"] not in TERMINAL | {"preparing", "prepared", "validated", "committing", "recovering"}:
-            raise ValueError("unknown status")
+        _validate_journal(value)
         # Never trust serialized absolute locations during recovery.
         value["stage_root"] = str(current / "stage")
         value["checkpoint_root"] = str(current / "checkpoint")
         return value
-    except (OSError, ValueError, KeyError, TypeError) as exc:
+    except (OSError, ValueError, KeyError, TypeError, TransactionError) as exc:
         raise TransactionError("transaction_incomplete: invalid journal; preserve " + str(current)) from exc
 
 
 def pending_transaction(book):
+    restore_journal = _safe(book, SNAPSHOT_RESTORE_JOURNAL)
+    if restore_journal.exists():
+        try:
+            state = json.loads(restore_journal.read_text(encoding="utf-8"))
+            return {"status": "snapshot_restore", "snapshot": state.get("snapshot")}
+        except (OSError, ValueError, TypeError):
+            return {"status": "corrupt", "error": "invalid snapshot restore journal"}
     if not _current(book).exists():
         return None
     try:
@@ -154,6 +211,14 @@ def pending_transaction(book):
 
 
 def recovery_command(book):
+    restore_journal = _safe(book, SNAPSHOT_RESTORE_JOURNAL)
+    if restore_journal.exists():
+        try:
+            timestamp = json.loads(restore_journal.read_text(encoding="utf-8"))["snapshot"]
+            return 'python scripts/novel_flow.py rollback "{}" --snapshot "{}"'.format(
+                Path(book).resolve(), timestamp)
+        except (OSError, ValueError, KeyError, TypeError):
+            return "preserve .snapshot-restore.json and repair it before continuing"
     return 'python scripts/chapter_transaction.py recover "{}"'.format(Path(book).resolve())
 
 
@@ -171,6 +236,41 @@ def _targets(chapter, chapter_file):
 
 def _save(book, journal):
     _write_json(_current(book) / "journal.json", journal)
+
+
+def _reparse_or_link(path):
+    info = os.lstat(path)
+    return path.is_symlink() or bool(getattr(info, "st_file_attributes", 0) & 0x400)
+
+
+def _prune_archives(book):
+    area = _safe(book, AREA)
+    if not area.is_dir() or _reparse_or_link(area):
+        return
+    resolved_area = area.resolve()
+    archives = []
+    for candidate in area.iterdir():
+        if not candidate.name.startswith("archive-") or not candidate.is_dir() or _reparse_or_link(candidate):
+            continue
+        try:
+            candidate.resolve().relative_to(resolved_area)
+        except ValueError:
+            continue
+        archives.append(candidate)
+    for candidate in sorted(archives, key=lambda path: path.stat().st_mtime, reverse=True)[ARCHIVE_RETENTION:]:
+        # Recheck the exact target immediately before removal; never touch current.
+        if (candidate.parent.resolve() == resolved_area and candidate.name.startswith("archive-")
+                and candidate.is_dir() and not _reparse_or_link(candidate)):
+            shutil.rmtree(str(candidate))
+
+
+def _finalize_terminal(book, journal):
+    stage = _current(book) / "stage"
+    if stage.exists():
+        if _reparse_or_link(stage):
+            raise TransactionError("unsafe_stage_cleanup: " + str(stage))
+        shutil.rmtree(str(stage))
+    _prune_archives(book)
 
 
 def prepare(book, chapter, chapter_file=None):
@@ -193,9 +293,11 @@ def prepare(book, chapter, chapter_file=None):
         baseline = book_hashes(book)
         current = _current(book)
         if current.exists():
+            _finalize_terminal(book, load_journal(book))
             os.replace(str(current), str(current.parent / ("archive-" + uuid.uuid4().hex)))
+            _prune_archives(book)
         stage, checkpoint = current / "stage", current / "checkpoint"
-        journal = {"status": "preparing", "chapter": chapter, "chapter_file": chapter_file,
+        journal = {"schema_version": JOURNAL_SCHEMA_VERSION, "status": "preparing", "chapter": chapter, "chapter_file": chapter_file,
                    "stage_root": str(stage), "checkpoint_root": str(checkpoint), "targets": targets,
                    "before": {path: baseline.get(path) for path in targets}, "baseline": baseline}
         _save(book, journal)
@@ -310,12 +412,15 @@ def _recover(book, journal):
                 _install_file(_safe(journal["checkpoint_root"], relative), target)
     journal["status"] = "recovered"
     _save(book, journal)
+    _finalize_terminal(book, journal)
     return journal
 
 
 def recover(book):
     with transaction_lock(book):
-        return _recover(book, load_journal(book))
+        journal = _recover(book, load_journal(book))
+        _finalize_terminal(book, journal)
+        return journal
 
 
 def commit(book, self_review_confirmed=False):
@@ -347,7 +452,6 @@ def commit(book, self_review_confirmed=False):
                 raise TransactionError("state_conflict: changed during commit")
             journal["status"] = "committed"
             _save(book, journal)
-            return journal
         except Exception as exc:
             journal["status"] = "committing"
             try:
@@ -356,6 +460,8 @@ def commit(book, self_review_confirmed=False):
                 raise TransactionError("transaction_incomplete: {}; {}; {}".format(
                     exc, recovery_exc, recovery_command(book))) from exc
             raise TransactionError("transaction_incomplete: rolled back; " + str(exc)) from exc
+        _finalize_terminal(book, journal)
+        return journal
 
 
 def main(argv=None):

@@ -24,6 +24,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
 # 把 scripts 目录加入 sys.path
@@ -547,6 +548,45 @@ class TestCmdBuild(_BookFixture):
         index_data, _ = load_rag_index(self.book_root)
         self.assertEqual(len(index_data["chapters"]), 4)
 
+    def test_build_reindexes_when_summary_metadata_changes(self):
+        """正文不变时，摘要字段变化也必须使对应条目失效。"""
+        cmd_build(self.book_root)
+        first, _ = load_rag_index(self.book_root)
+        before = next(c for c in first["chapters"] if c["chapter"] == 1)
+        summary_path = Path(self.book_root) / "追踪" / "章节摘要.md"
+        summary_path.write_text(
+            _make_summary_text().replace("期待、好奇", "沉重、警觉").replace(
+                "林雷初到沃尔夫商店选购盘龙戒指，偶遇神秘老者德林柯沃特。",
+                "林雷初到沃尔夫商店，发现月蚀契约并决定追查。",
+            ), encoding="utf-8")
+        cmd_build(self.book_root)
+        after, _ = load_rag_index(self.book_root)
+        refreshed = next(c for c in after["chapters"] if c["chapter"] == 1)
+        self.assertNotEqual(before["fingerprint"], refreshed["fingerprint"])
+        self.assertIn("月蚀契约", refreshed["summary"])
+        self.assertIn("沉重", refreshed["emotion_tags"])
+
+    def test_build_uses_volume_summary_for_chapters_without_detail(self):
+        """卷级回顾压缩应覆盖范围内未保留逐章摘要的章节。"""
+        summary_path = Path(self.book_root) / "追踪" / "章节摘要.md"
+        summary_path.write_text(
+            "## 第1-4章 回顾压缩\n"
+            "- 发生了什么：林雷发现月蚀契约并离开旧城。\n"
+            "- 状态变化：林雷决定追查真相。\n"
+            "- 伏笔进出：埋入月蚀印记。\n"
+            "- 关键实体：林雷、月蚀契约、旧城。\n"
+            "- 时间约束：四章内发生在同一夜。\n"
+            "- 来源章节：1-4\n", encoding="utf-8")
+        cmd_build(self.book_root)
+        result = rag_query(self.book_root, "月蚀契约", top_k=4)
+        self.assertEqual({r["chapter"] for r in result["results"]}, {1, 2, 3, 4})
+
+    def test_save_index_propagates_atomic_replace_failure(self):
+        """索引落盘失败不能伪装成成功。"""
+        with patch("rag_retriever.os.replace", side_effect=OSError("disk full")):
+            with self.assertRaises(OSError):
+                save_rag_index(self.book_root, {"version": "x", "chapters": []})
+
     def test_build_no_chapters_returns_error(self):
         """正文目录无 .md 文件时返回错误码 2。"""
         empty_book = Path(self.tmpdir) / "empty_book"
@@ -647,6 +687,17 @@ class TestRagQuery(_BookFixture):
         # 林雷出现在第1、2、4章的实体中
         chapters = [r["chapter"] for r in result["results"]]
         self.assertIn(1, chapters)
+
+    def test_light_scene_falls_back_to_full_search_when_entity_fast_path_misses(self):
+        """“离开”等轻场景词不能令因果摘要在实体零命中时被静默丢弃。"""
+        summary_path = Path(self.book_root) / "追踪" / "章节摘要.md"
+        summary_path.write_text(
+            "### 第1章\n- 章节摘要：林雷离开旧城寻找真相。\n"
+            "- 关键实体：林雷。\n", encoding="utf-8")
+        cmd_build(self.book_root)
+        result = rag_query(self.book_root, "离开旧城的原因", top_k=3)
+        self.assertFalse(result.get("light_mode", False))
+        self.assertEqual([r["chapter"] for r in result["results"]], [1])
 
     def test_no_index_returns_error(self):
         """索引不存在时返回错误信息。"""

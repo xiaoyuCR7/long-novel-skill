@@ -30,6 +30,7 @@ TEST_MODULES = [
     "test_check_text",
     "test_config",
     "test_novel_flow",
+    "test_mcp_server",
     "test_context_manager",
     "test_source_materialize",
     "test_resume",

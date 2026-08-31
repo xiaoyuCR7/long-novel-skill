@@ -149,6 +149,21 @@ class TestBuildIndex(unittest.TestCase):
             loaded, path = load_index(book)
             self.assertIsNone(loaded)
 
+    def test_build_index_reads_formal_template_entities(self):
+        """实体派生索引读取正式七字段模板中的非加粗关键实体行。"""
+        with tempfile.TemporaryDirectory() as tmp:
+            book = Path(tmp)
+            (book / "追踪").mkdir()
+            (book / "追踪" / "章节摘要.md").write_text(
+                "### 第7章\n- 发生了什么：林雷获得月蚀契约。\n"
+                "- 状态变化：林雷决心追查。\n- 伏笔进出：埋入印记。\n"
+                "- 新登场：夜鸦。\n- 关键实体：林雷、月蚀契约、夜鸦。\n"
+                "- 承上：失钥。\n- 启下：北港。\n",
+                encoding="utf-8",
+            )
+            index, _, _ = build_index(str(book))
+            self.assertEqual(index["月蚀契约"], [7])
+
 
 class TestSemanticSearch(unittest.TestCase):
     """BM25 语义检索。"""

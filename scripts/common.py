@@ -11,7 +11,9 @@ import os
 import re
 import shutil
 import sys
+import tempfile
 import time
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -183,47 +185,65 @@ def prune_cache(cache, max_entries=500, ttl_seconds=7 * 24 * 3600, now=None):
     return dict(items[:max_entries])
 
 
+SUMMARY_PARSER_VERSION = "2"
+SUMMARY_FIELD_NAMES = ("发生了什么", "状态变化", "伏笔进出", "新登场", "关键实体", "承上", "启下")
+
+
+def _summary_line_fields(body):
+    """提取 Markdown 项目行中的字段，兼容可选粗体和中英文冒号。"""
+    fields = {}
+    pattern = re.compile(r"^\s*-?\s*(?:\*\*)?([^：:\n*]+?)(?:\*\*)?\s*[：:]\s*(.*?)\s*$", re.M)
+    for match in pattern.finditer(body or ""):
+        name = match.group(1).strip()
+        value = match.group(2).strip().strip("。 ")
+        if name and value:
+            fields.setdefault(name, value)
+    return fields
+
+
+def _split_summary_entities(value):
+    return [part.strip().strip("。 ") for part in re.split(r"[，,、/；;\n]+", value or "")
+            if part.strip().strip("。 ") and len(part.strip().strip("。 ")) <= 20]
+
+
 def extract_summary_fields(body, char_names=None):
-    """兼容新旧章节摘要格式，提取 {summary, entities, emotion_tags}。
+    """解析正式七字段摘要模板及旧别名，返回统一的检索/派生字段。
 
-    新格式：``章节摘要：/关键实体：/情绪基调：`` 字段（当前模板）。
-    旧格式：``### 核心事件 / ### 人物变化 / 节奏档位`` 段落（demo 用）。
-    回退策略：字段未命中时依次降级到旧格式，再降级到空。
+    ``summary_fields`` 始终包含正式字段名；``summary`` 汇总可检索的剧情、
+    状态和伏笔信息，保证卷级压缩与逐章摘要使用同一契约。
     """
-    result = {"summary": "", "entities": [], "emotion_tags": []}
+    summary_fields = {name: "" for name in SUMMARY_FIELD_NAMES}
+    line_fields = _summary_line_fields(body)
+    for name in SUMMARY_FIELD_NAMES:
+        summary_fields[name] = line_fields.get(name, "")
 
-    # 摘要：新格式字段 → 旧格式「核心事件」段落
-    m = re.search(r"(?:章节摘要|一句话|概要)[：:](.*?)(?:\n\s*-\s|\n#{1,3}|\Z)", body, re.S)
-    if m:
-        result["summary"] = m.group(1).strip().strip("。 ")
-    else:
-        m2 = re.search(r"#{1,3}\s*核心事件[：:]?\s*\n(.*?)(?=\n#{1,3}|\Z)", body, re.S)
-        if m2:
-            result["summary"] = m2.group(1).strip()[:200]
+    legacy_summary = ""
+    for alias in ("章节摘要", "摘要", "一句话", "概要"):
+        if line_fields.get(alias):
+            legacy_summary = line_fields[alias]
+            break
+    if not legacy_summary:
+        m = re.search(r"#{1,3}\s*核心事件[：:]?\s*\n(.*?)(?=\n#{1,3}|\Z)", body or "", re.S)
+        if m:
+            legacy_summary = m.group(1).strip()[:200]
 
-    # 实体：新格式字段 → 旧格式「人物变化」里的角色名
-    m = re.search(r"关键实体[：:](.*?)(?:\n\s*-\s|\n#{1,3}|\Z)", body, re.S)
-    if m:
-        result["entities"] = [p.strip() for p in re.split(r"[，,、/；;\n]+", m.group(1))
-                              if p.strip() and len(p.strip()) <= 20]
-    elif char_names:
-        found = set()
-        for name in char_names:
-            if name and len(name) >= 2 and name in body:
-                found.add(name)
-        result["entities"] = sorted(found)
+    summary_parts = [summary_fields[name] for name in
+                     ("发生了什么", "状态变化", "伏笔进出", "新登场", "承上", "启下")
+                     if summary_fields[name]]
+    summary = " ".join(summary_parts) or legacy_summary
+    entities = _split_summary_entities(summary_fields["关键实体"] or line_fields.get("关键实体", ""))
+    if not entities and char_names:
+        entities = sorted({name for name in char_names if name and len(name) >= 2 and name in (body or "")})
 
-    # 情绪：新格式字段 → 旧格式「节奏档位」行
-    m = re.search(r"情绪基调[：:](.*?)(?:\n|$)", body)
-    if m:
-        result["emotion_tags"] = [t.strip() for t in re.split(r"[，,、/；;]+", m.group(1))
-                                  if t.strip() and len(t.strip()) <= 10]
-    else:
-        m2 = re.search(r"节奏档位\**\s*[：:]\s*(.{1,20})", body)
-        if m2:
-            result["emotion_tags"] = [m2.group(1).strip()]
-
-    return result
+    emotion_value = line_fields.get("情绪基调", "")
+    emotion_tags = [tag.strip() for tag in re.split(r"[，,、/；;]+", emotion_value)
+                    if tag.strip() and len(tag.strip()) <= 10]
+    if not emotion_tags:
+        m = re.search(r"节奏档位\**\s*[：:]\s*(.{1,20})", body or "")
+        if m:
+            emotion_tags = [m.group(1).strip()]
+    return {"summary": summary, "entities": entities, "emotion_tags": emotion_tags,
+            "summary_fields": summary_fields}
 
 
 class BM25Index:
@@ -427,14 +447,60 @@ def write_text(path, content, encoding="utf-8") -> bool:
         return False
 
 
+def atomic_write_json(path, data, indent=2) -> bool:
+    """同目录临时文件 + fsync + replace 的 JSON 原子写入；失败向调用者传播。"""
+    p = Path(path)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_name = tempfile.mkstemp(prefix=f".{p.name}.", suffix=".tmp", dir=str(p.parent))
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=indent)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp_name, p)
+        if os.name != "nt":
+            directory_fd = os.open(str(p.parent), os.O_RDONLY)
+            try:
+                os.fsync(directory_fd)
+            finally:
+                os.close(directory_fd)
+        return True
+    except Exception:
+        try:
+            os.unlink(tmp_name)
+        except OSError:
+            pass
+        raise
+
+
+@contextmanager
+def canonical_read_lock(book_root):
+    """Hold the shared writer lock while reading canonical story memory."""
+    from chapter_transaction import (TransactionError, pending_transaction,
+                                     recovery_command, transaction_lock)
+    deadline = time.monotonic() + 5.0
+    manager = None
+    while manager is None:
+        candidate = transaction_lock(Path(book_root))
+        try:
+            candidate.__enter__()
+            manager = candidate
+        except TransactionError:
+            if time.monotonic() >= deadline:
+                raise
+            time.sleep(0.01)
+    try:
+        if pending_transaction(Path(book_root)):
+            raise TransactionError("transaction_incomplete: " + recovery_command(book_root))
+        yield
+    finally:
+        manager.__exit__(None, None, None)
+
+
 def write_json(path, data, indent=2) -> bool:
     """安全写入JSON文件（ensure_ascii=False）。"""
     try:
-        p = Path(path)
-        p.parent.mkdir(parents=True, exist_ok=True)
-        with open(p, "w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False, indent=indent)
-        return True
+        return atomic_write_json(path, data, indent)
     except (IOError, TypeError, PermissionError, OSError) as e:
         print(f"[ERROR] 保存JSON失败 {path}: {e}", file=sys.stderr)
         return False

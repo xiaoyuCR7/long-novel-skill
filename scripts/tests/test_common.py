@@ -27,6 +27,7 @@ from common import (
     find_book_dir,
     count_chars,
     normalize_whitespace,
+    extract_summary_fields,
 )
 
 
@@ -227,6 +228,27 @@ class TestNormalizeWhitespace(unittest.TestCase):
 
     def test_strip_outer(self):
         self.assertEqual(normalize_whitespace("\n\n内容\n\n"), "内容")
+
+
+class TestSummaryFields(unittest.TestCase):
+    """正式章节摘要模板应由所有消费方共享解析。"""
+
+    def test_formal_template_round_trip(self):
+        body = """### 第7章 旧城雨夜
+
+- 发生了什么：林雷在旧城找到了月蚀契约。
+- 状态变化：林雷从怀疑转为决心追查。
+- 伏笔进出：埋入月蚀印记；回收旧钥匙。
+- 新登场：夜鸦。
+- 关键实体：林雷、月蚀契约、旧城。
+- 承上：承接上一章的失钥。
+- 启下：下一章前往北港。
+"""
+        fields = extract_summary_fields(body)
+        self.assertEqual(fields["entities"], ["林雷", "月蚀契约", "旧城"])
+        self.assertIn("月蚀契约", fields["summary"])
+        self.assertEqual(fields["summary_fields"]["状态变化"], "林雷从怀疑转为决心追查")
+        self.assertEqual(fields["summary_fields"]["新登场"], "夜鸦")
 
 
 if __name__ == "__main__":

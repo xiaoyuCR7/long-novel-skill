@@ -17,6 +17,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 # 把 scripts 目录加入 sys.path
 SCRIPT_DIR = Path(__file__).resolve().parent.parent
@@ -39,6 +40,7 @@ from story_graph import (
     extract_entity_nodes,
     load_json,
     save_json,
+    update_chapter,
 )
 
 
@@ -160,6 +162,47 @@ class TestExtractEntityNodes(_BaseGraphTest):
         self.assertEqual(node_map["寒霜剑"]["type"], "item")
         self.assertIn("龙巢", node_map)
         self.assertEqual(node_map["龙巢"]["type"], "location")
+
+    def test_accepts_flat_entity_index_schema(self):
+        """实体派生索引的实际 flat {实体:[章号]} schema 也可构图。"""
+        self._write_json(f"追踪/{ENTITY_INDEX_FILE}", {"月蚀契约": [2, 5]})
+        nodes, _ = extract_entity_nodes(self.book_root)
+        node = next(n for n in nodes if n["label"] == "月蚀契约")
+        self.assertEqual(node["first_appear_chapter"], 2)
+        self.assertEqual(node["last_updated_chapter"], 5)
+
+    def test_formal_template_accepts_plain_key_entity_line(self):
+        """图谱从正式模板的 `- 关键实体：` 行派生实体。"""
+        self._write(
+            f"追踪/{CHAPTER_SUMMARY_FILE}",
+            "### 第1章\n- 发生了什么：林雷杀死贝贝。\n"
+            "- 状态变化：林雷负伤。\n- 伏笔进出：埋入追杀。\n"
+            "- 新登场：无。\n- 关键实体：character:林雷、character:贝贝。\n"
+            "- 承上：无。\n- 启下：逃亡。\n",
+        )
+        nodes, edges = extract_entity_nodes(self.book_root)
+        self.assertEqual({n["label"] for n in nodes}, {"林雷", "贝贝"})
+        self.assertEqual(edges[0]["type"], "kills")
+
+    def test_save_json_propagates_atomic_replace_failure(self):
+        """图谱 JSON 原子替换失败需要传播给调用者。"""
+        with patch("common.os.replace", side_effect=OSError("disk full")):
+            with self.assertRaises(OSError):
+                save_json(self._graph_path(), {"nodes": []})
+
+    def test_update_chapter_reads_formal_plain_key_entity_line(self):
+        """增量图谱更新也读取正式模板的普通关键实体行。"""
+        self._write(
+            f"追踪/{CHAPTER_SUMMARY_FILE}",
+            "### 第2章\n- 发生了什么：林雷找到月蚀契约。\n"
+            "- 状态变化：林雷决定追查。\n- 伏笔进出：埋入印记。\n"
+            "- 新登场：无。\n- 关键实体：character:林雷、item:月蚀契约。\n"
+            "- 承上：失钥。\n- 启下：北港。\n",
+        )
+        save_json(self._graph_path(), {"nodes": [], "edges": [], "stats": {}})
+        result = update_chapter(self.book_root, 2)
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["added_nodes"], 2)
 
     def test_extract_edges_from_summaries(self):
         """从章节摘要的关系语句中提取边。"""

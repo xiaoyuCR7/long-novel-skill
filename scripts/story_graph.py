@@ -21,6 +21,8 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
+from common import atomic_write_json, canonical_read_lock, extract_summary_fields
+
 
 # =========================================================
 # 常量
@@ -79,13 +81,7 @@ def load_json(path: Path, default: Any = None) -> Any:
 
 
 def save_json(path: Path, data: Any) -> bool:
-    try:
-        ensure_dir(path.parent)
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False, indent=2)
-        return True
-    except OSError:
-        return False
+    return atomic_write_json(path, data)
 
 
 def backup_graph(path: Path) -> Optional[Path]:
@@ -146,8 +142,13 @@ def extract_entity_nodes(
 
     # 从 entity_index.json 提取实体
     entity_index = load_json(book_root / "追踪" / ENTITY_INDEX_FILE, {})
-    entities = entity_index.get("entities", {})
-    chapter_entities = entity_index.get("chapter_entities", {})
+    if isinstance(entity_index, dict) and "entities" in entity_index:
+        entities = entity_index.get("entities", {})
+        chapter_entities = entity_index.get("chapter_entities", {})
+    else:
+        # entity_index.py 实际写入 flat {实体名: [章节号]}；保留 nested legacy schema。
+        entities = entity_index if isinstance(entity_index, dict) else {}
+        chapter_entities = {}
 
     if not entities:
         # 从章节摘要回退提取
@@ -194,40 +195,20 @@ def _extract_from_summaries(
     if not text:
         return entities, chapter_entities
 
-    # 解析每章的「关键实体」字段
-    chapter_blocks = re.split(r"\n### 第(\d+)章", text)
-    for i in range(1, len(chapter_blocks), 2):
-        try:
-            ch_num = int(chapter_blocks[i])
-        except ValueError:
-            continue
-        block = chapter_blocks[i + 1] if i + 1 < len(chapter_blocks) else ""
-
-        # 提取关键实体行
-        for line in block.split("\n"):
-            line = line.strip()
-            if line.startswith("- **关键实体**") or line.startswith("关键实体"):
-                # 提取冒号后的内容
-                parts = re.split(r"[：:]", line, maxsplit=1)
-                if len(parts) > 1:
-                    content = parts[1].strip()
-                    # 分割实体（逗号/顿号/分号分隔）
-                    for entity in re.split(r"[,，、;；]", content):
-                        entity = entity.strip()
-                        if not entity:
-                            continue
-                        # 尝试解析「类型:名称」格式
-                        etype = "item"
-                        ename = entity
-                        if ":" in entity:
-                            etype, ename = entity.split(":", 1)
-                            etype = etype.strip()
-                            ename = ename.strip()
-
-                        if ename not in entities:
-                            entities[ename] = {"type": etype, "chapters": []}
-                        if ch_num not in entities[ename]["chapters"]:
-                            entities[ename]["chapters"].append(ch_num)
+    for ch_num, block in _summary_chapter_blocks(text):
+        for entity in extract_summary_fields(block).get("entities", []):
+            etype = "item"
+            ename = entity
+            if ":" in entity:
+                etype, ename = entity.split(":", 1)
+                etype = etype.strip()
+                ename = ename.strip()
+            if not ename:
+                continue
+            if ename not in entities:
+                entities[ename] = {"type": etype, "chapters": []}
+            if ch_num not in entities[ename]["chapters"]:
+                entities[ename]["chapters"].append(ch_num)
 
     return entities, dict(chapter_entities)
 
@@ -261,18 +242,12 @@ def _extract_edges_from_summaries(
     ]
 
     seen_edges = set()
-    chapter_blocks = re.split(r"\n### 第(\d+)章", text)
-
-    for i in range(1, len(chapter_blocks), 2):
-        try:
-            ch_num = int(chapter_blocks[i])
-        except ValueError:
-            continue
-        block = chapter_blocks[i + 1] if i + 1 < len(chapter_blocks) else ""
+    for ch_num, block in _summary_chapter_blocks(text):
+        relation_text = re.sub(r"^\s*-\s*(?:\*\*)?[^：:\n*]+(?:\*\*)?\s*[：:]\s*", "", block, flags=re.M)
 
         for pattern, edge_type in relation_patterns:
-            for m in re.finditer(pattern, block):
-                a, b = m.group(1).strip(), m.group(2).strip()
+            for m in re.finditer(pattern, relation_text):
+                a, b = m.group(1).strip("，。；;：: "), m.group(2).strip("，。；;：: ")
                 if a not in node_id_map or b not in node_id_map:
                     continue
                 edge_key = (node_id_map[a], edge_type, node_id_map[b])
@@ -291,11 +266,29 @@ def _extract_edges_from_summaries(
     return edges
 
 
+def _summary_chapter_blocks(text: str) -> List[Tuple[int, str]]:
+    """枚举 h2/h3 章节摘要块，兼容文件首行即章节标题。"""
+    entries = list(re.finditer(r"^#{2,3}\s*第\s*(\d+)\s*章.*$", text or "", re.M))
+    blocks = []
+    for idx, match in enumerate(entries):
+        end = entries[idx + 1].start() if idx + 1 < len(entries) else len(text)
+        blocks.append((int(match.group(1)), text[match.start():end]))
+    return blocks
+
+
 # =========================================================
 # v1.1 从正文直接提取（不依赖章节摘要）
 # =========================================================
 
 def extract_from_chapter(
+    book_root: Path,
+    chapter: int,
+) -> Dict[str, Any]:
+    with canonical_read_lock(book_root):
+        return _extract_from_chapter_unlocked(book_root, chapter)
+
+
+def _extract_from_chapter_unlocked(
     book_root: Path,
     chapter: int,
 ) -> Dict[str, Any]:
@@ -521,6 +514,14 @@ def build_graph(
     book_root: Path,
     from_scratch: bool = False,
 ) -> Dict[str, Any]:
+    with canonical_read_lock(book_root):
+        return _build_graph_unlocked(book_root, from_scratch)
+
+
+def _build_graph_unlocked(
+    book_root: Path,
+    from_scratch: bool = False,
+) -> Dict[str, Any]:
     """构建/更新知识图谱。
 
     Args:
@@ -586,6 +587,14 @@ def update_chapter(
     book_root: Path,
     chapter: int,
 ) -> Dict[str, Any]:
+    with canonical_read_lock(book_root):
+        return _update_chapter_unlocked(book_root, chapter)
+
+
+def _update_chapter_unlocked(
+    book_root: Path,
+    chapter: int,
+) -> Dict[str, Any]:
     """增量更新：只从单章摘要提取新实体和关系，追加到已有图谱。
 
     每章写完后调用，避免全量 rebuild 的代价。
@@ -607,44 +616,29 @@ def update_chapter(
         return {"ok": False, "error": "章节摘要文件不存在"}
 
     # 找到本章摘要块
-    chapter_block = ""
-    chapter_blocks = re.split(r"\n### 第(\d+)章", text)
-    for i in range(1, len(chapter_blocks), 2):
-        try:
-            ch_num = int(chapter_blocks[i])
-        except ValueError:
-            continue
-        if ch_num == chapter:
-            chapter_block = chapter_blocks[i + 1] if i + 1 < len(chapter_blocks) else ""
-            break
+    chapter_block = next((block for ch_num, block in _summary_chapter_blocks(text)
+                          if ch_num == chapter), "")
 
     if not chapter_block:
         return {"ok": False, "error": f"第{chapter}章摘要未找到"}
 
     # 从本章摘要提取实体
     new_entities: Dict[str, Any] = {}
-    for line in chapter_block.split("\n"):
-        line = line.strip()
-        if line.startswith("- **关键实体**") or line.startswith("关键实体"):
-            parts = re.split(r"[：:]", line, maxsplit=1)
-            if len(parts) > 1:
-                content = parts[1].strip()
-                for entity in re.split(r"[,，、;；]", content):
-                    entity = entity.strip()
-                    if not entity:
-                        continue
-                    etype = "item"
-                    ename = entity
-                    if ":" in entity:
-                        etype, ename = entity.split(":", 1)
-                        etype = etype.strip()
-                        ename = ename.strip()
-                    if etype not in NODE_TYPES:
-                        etype = "item"
-                    if ename not in new_entities:
-                        new_entities[ename] = {"type": etype, "chapters": []}
-                    if chapter not in new_entities[ename]["chapters"]:
-                        new_entities[ename]["chapters"].append(chapter)
+    for entity in extract_summary_fields(chapter_block).get("entities", []):
+        etype = "item"
+        ename = entity
+        if ":" in entity:
+            etype, ename = entity.split(":", 1)
+            etype = etype.strip()
+            ename = ename.strip()
+        if etype not in NODE_TYPES:
+            etype = "item"
+        if not ename:
+            continue
+        if ename not in new_entities:
+            new_entities[ename] = {"type": etype, "chapters": []}
+        if chapter not in new_entities[ename]["chapters"]:
+            new_entities[ename]["chapters"].append(chapter)
 
     # 提取关系边
     new_edges = []

@@ -17,6 +17,7 @@ sys.path.insert(0, str(SCRIPTS))
 import check_text
 import novel_flow
 import resume
+import validate_tracking
 
 
 class TestChapterTransaction(unittest.TestCase):
@@ -304,6 +305,27 @@ class TestChapterTransaction(unittest.TestCase):
         with self.assertRaisesRegex(self.tx.TransactionError, "self_review"):
             self.tx.commit(self.book)
 
+    def test_committed_transaction_removes_full_stage_copy(self):
+        stage, _ = self.validated()
+        self.tx.commit(self.book, self_review_confirmed=True)
+        self.assertFalse(stage.exists())
+        self.assertTrue((stage.parent / "checkpoint").exists())
+
+    def test_load_journal_rejects_committing_state_without_after_hashes(self):
+        journal = self.tx.prepare(self.book, 1)
+        journal.pop("after", None)
+        journal["status"] = "committing"
+        (self.tx._current(self.book) / "journal.json").write_text(json.dumps(journal), encoding="utf-8")
+        with self.assertRaisesRegex(self.tx.TransactionError, "invalid journal"):
+            self.tx.load_journal(self.book)
+
+    def test_load_journal_rejects_unknown_schema_version(self):
+        journal = self.tx.prepare(self.book, 1)
+        journal["schema_version"] = 999
+        (self.tx._current(self.book) / "journal.json").write_text(json.dumps(journal), encoding="utf-8")
+        with self.assertRaisesRegex(self.tx.TransactionError, "invalid journal"):
+            self.tx.load_journal(self.book)
+
     def test_nested_lock_rejects_concurrent_transaction(self):
         with self.tx.transaction_lock(self.book):
             with self.assertRaisesRegex(self.tx.TransactionError, "locked"):
@@ -349,6 +371,78 @@ class TestChapterTransaction(unittest.TestCase):
         self.assertTrue(acquired, message)
         self.assertEqual(result, ["transaction_locked"])
         self.assertIsNone(self.tx.pending_transaction(self.book))
+
+
+class TestTrackingValidator(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name)
+
+    def write(self, name, content):
+        path = self.root / name
+        path.write_text(content, encoding="utf-8")
+        return path
+
+    def test_summary_rejects_duplicate_chapter_and_empty_required_values(self):
+        fields = "\n".join(f"- {name}：" for name in validate_tracking.SUMMARY_REQUIRED_FIELDS)
+        path = self.write("章节摘要.md", "## 近 10 章详记\n### 第1章 甲\n" + fields
+                          + "\n### 第1章 乙\n" + fields)
+        issues = validate_tracking.validate_summary(path)
+        self.assertTrue(any("重复" in issue for issue in issues), issues)
+        self.assertTrue(any("为空" in issue for issue in issues), issues)
+
+    def test_summary_accepts_shared_parser_bold_field_contract(self):
+        fields = "\n".join(f"- **{name}**：N/A" for name in validate_tracking.SUMMARY_REQUIRED_FIELDS)
+        path = self.write("章节摘要.md", "## 近 10 章详记\n### 第1章 甲\n" + fields)
+        self.assertEqual(validate_tracking.validate_summary(path), [])
+
+    def test_ledger_rejects_same_id_in_multiple_lifecycle_sections(self):
+        path = self.write("伏笔台账.md", """# 伏笔台账
+## 🔴 超期
+| ID | 内容 | 埋设章节 | 原回收窗口 | 超期章数 | 处理 |
+|---|---|---|---|---|---|
+| F1-01 | 钥匙 | 第1章 | 第2章 | 1 | 待回收 |
+## 🟡 活跃
+| ID | 内容 | 埋设章节 | 预期回收 | 状态 | 备注 |
+|---|---|---|---|---|---|
+| F1-01 | 钥匙 | 第1章 | 第3章 | 待回收 | - |
+## 🟢 长线
+| ID | 内容 | 埋设章节 | 目标卷 | 状态 |
+|---|---|---|---|---|
+## ✅ 已回收
+| ID | 内容 | 埋设章节 | 回收章节 | 方式 | 结果 |
+|---|---|---|---|---|---|
+""")
+        issues = validate_tracking.validate_ledger(path)
+        self.assertTrue(any("重复" in issue or "多个生命周期" in issue for issue in issues), issues)
+
+    def test_character_and_quota_records_are_unique(self):
+        character = self.write("角色状态.md", """## 林澈
+- 当前身份：修表师
+- 当前能力：识锁
+- 关键关系：周言
+- 状态变更记录：第1章
+## 林澈
+- 当前身份：失踪者
+- 当前能力：无
+- 关键关系：无
+- 状态变更记录：第2章
+""")
+        self.assertTrue(any("重复" in issue for issue in validate_tracking.validate_character_state(character)))
+        quota = self.write("节奏配额.md", """## A/B/C 配额记录
+| 章节 | 配额 | 触发内容 |
+|---|---|---|
+| 1 | A | 一 |
+| 1 | B | 二 |
+## 事件冷却记录
+| 章节 | 事件类型 | 事件内容 |
+|---|---|---|
+## 档位记录
+| 章节 | 档位 |
+|---|---|
+""")
+        self.assertTrue(any("重复" in issue for issue in validate_tracking.validate_quota(quota)))
 
 
 if __name__ == "__main__":
