@@ -18,7 +18,9 @@ model_tier: T0
 章意图使用 chapter-intent.json 的同一字段契约；部署时不要求访问技能目录，必需字段在此列全：
 `goal`、`state_before`、`trigger`、`choice_or_cost`、`state_after`、`allowed_events`、
 `forbidden_releases`、`emotion_transition`、`pacing_tier`、`quota`、`style_authority`、
-`sources`、`ending_mode`、`hook_question`，另以 `closure_requirements` 记录闭合要求。
+`sources`、`ending_mode`、`hook_question`、`on_page_requirements`，另以 `closure_requirements` 记录闭合要求。
+
+只提取来源明确要求必须在正文可直接指认的条件，写入 on_page_requirements；不得把编辑偏好升级为 P0。
 
 前后状态必须可验证，触发须推动选择/代价；emotion_transition 写“前态 → 后态 + 触发/选择”，
 不是只写“爽/感动”。style_authority 采用最高权威文风，sources 附实际来源内容及路径。

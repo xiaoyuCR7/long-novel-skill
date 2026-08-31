@@ -98,6 +98,23 @@ blocking 不能凭一句“读起来没问题”跳过，须修复或使用下�
 遮名测试用来定位差异不足，不要求每句短答都可独立认人；补清说话人比硬造口癖重要。
 只在能改变策略、关系或节奏时加动作/沉默，不按频率穿插，不限定对白比例。详见 `dialogue.md`。
 
+## 状态核对与状态复盘
+
+必要状态核对会改变悬疑、改变行动或改变读者认知，也可包含一次确有作用的责任确认；应保留。
+无新增戏剧功能的状态复盘，是在动作或后果已经确立之后，再重复同一状态、选择或责任。
+
+删除时逐句核对：
+
+- 前文的动作或后果是否已经让同一信息成立；
+- 删除是否不损失因果、连续性、悬疑、行动依据和读者必要认知；
+- 仍有重复才直接删，不改写成另一句总结，也不补造事实。
+
+不能仅因“仍”“依旧”等词机械删除；这些词可能承担时间连续、状态变化或必要对照。
+
+### Relationship explanation deletion test
+
+For direct relationship conclusions, check the local observable carriers (actions, forms of address, pauses, object handoffs, and consequences) before deleting. Delete or compress only when the sentence adds no new information and deletion preserves relationship state and interaction function; preserve necessary state, causality, strategy, viewpoint knowledge, or interaction function with the smallest current-POV rewrite. Do not invent memories, diagnoses, symbols, actions, dialogue, motives, or facts to satisfy show-don't-tell, and protect on_page_requirements. This is shared by full-chapter and recovery review, not fragment mode.
+
 ## Gate F/G：结尾与解释服从叙事契约
 
 删重复点题、越过视角的信息和抢先定性的旁白；保留已批准声线中的判断、回顾、内心戏与余韵。

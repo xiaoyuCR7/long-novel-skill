@@ -15,7 +15,7 @@ import os
 # Skill 版本
 # =============================================================================
 
-SKILL_VERSION = "8.0.0"
+SKILL_VERSION = "8.2.0"
 SKILL_NAME = "long-novel-skill"
 
 

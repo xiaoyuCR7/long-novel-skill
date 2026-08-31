@@ -8,6 +8,7 @@
   "state_after": "",
   "allowed_events": [],
   "forbidden_releases": [],
+  "on_page_requirements": [],
   "emotion_transition": "",
   "pacing_tier": "medium",
   "quota": "none",

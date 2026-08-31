@@ -1,6 +1,6 @@
 {
   "name": "long-novel-skill",
-  "version": "8.0.0",
+  "version": "8.2.0",
   "description": "面向中文长篇网文的可恢复创作系统：以轻量意图路由、章意图契约、场景渲染内核和原子追踪事务协调开书、续写、修订、分析与发布。支持34题材、多平台适配。",
   "activation": {
     "patterns": [
@@ -76,11 +76,11 @@
     "homepage": "https://github.com/xiaoyuCR7/long-novel-skill",
     "repository": "https://github.com/xiaoyuCR7/long-novel-skill",
     "created": "2026-07-26",
-    "last_reviewed": "2026-08-27",
+    "last_reviewed": "2026-08-30",
     "review_interval_days": 90,
     "genre_cards_count": 34,
     "scripts_count": 44,
-    "tests_count": 1052,
+    "tests_count": 1082,
     "craft_files_count": 47,
     "workflow_files_count": 27,
     "reference_files_count": 112
@@ -118,7 +118,10 @@
       "节奏三档制与A/B/C配额",
       "语义级节奏审查",
       "质量评分系统（七维加权）",
-      "门禁修复计划"
+      "门禁修复计划",
+      "正文显式约束与场景可信度审计",
+      "恢复后文学复审",
+      "限时行动时间可感知性审计"
     ],
     "long_form_support": [
       "百万字结构展开",

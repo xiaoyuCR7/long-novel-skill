@@ -25,17 +25,17 @@ class TestReleaseContract(unittest.TestCase):
         suite = unittest.defaultTestLoader.loadTestsFromName("test_style_exemptions")
         self.assertGreater(suite.countTestCases(), 0)
 
-    def test_public_versions_are_v8(self):
-        self.assertEqual(config.SKILL_VERSION, "8.0.0")
-        self.assertEqual(json.loads((ROOT / "skill.json").read_text(encoding="utf-8"))["version"], "8.0.0")
+    def test_public_versions_are_v8_2(self):
+        self.assertEqual(config.SKILL_VERSION, "8.2.0")
+        self.assertEqual(json.loads((ROOT / "skill.json").read_text(encoding="utf-8"))["version"], "8.2.0")
         skill = (ROOT / "SKILL.md").read_text(encoding="utf-8")
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
         changelog = (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
         cli = (ROOT / "novel-cli.py").read_text(encoding="utf-8")
-        self.assertIn("version: 8.0.0", skill)
-        self.assertIn("**v8.0.0**", readme)
-        self.assertIn("## v8.0.0", changelog)
-        self.assertIn("v8.0.0", cli)
+        self.assertIn("version: 8.2.0", skill)
+        self.assertIn("**v8.2.0**", readme)
+        self.assertIn("## v8.2.0", changelog)
+        self.assertIn("v8.2.0", cli)
 
     def test_skill_json_counts_match_repository(self):
         metadata = json.loads((ROOT / "skill.json").read_text(encoding="utf-8"))["metadata"]

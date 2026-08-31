@@ -4,7 +4,7 @@ description: Use when creating, continuing, revising, analyzing, or publishing C
 license: MIT
 metadata:
   author: 熊小雨
-  version: 8.0.0
+  version: 8.2.0
   mcp_server: mcp_server/server.py
 ---
 

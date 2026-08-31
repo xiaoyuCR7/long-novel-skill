@@ -18,7 +18,8 @@
 
 字段以 `assets/templates/chapter-intent.json` 为准，含 goal、state_before、trigger、
 choice_or_cost、state_after、allowed_events、forbidden_releases、emotion_transition、
-pacing_tier、quota、style_authority、sources、ending_mode、hook_question 及 closure_requirements。
+pacing_tier、quota、style_authority、sources、ending_mode、hook_question、on_page_requirements 及 closure_requirements。
+on_page_requirements 只提取来源明确要求、正文可直接指认的条件；不得把编辑偏好升为 P0。
 可用 `assets/templates/chapter-brief.md` 包装，不另列一套可省略字段的情节点模板。
 
 Brief 必须实际包含：
