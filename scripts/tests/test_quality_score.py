@@ -30,7 +30,11 @@ from quality_score import (
     clamp_score,
     get_grade,
     score_ai_control,
+    score_emotional_impact,
     score_chapter,
+    analyze_trend,
+    format_markdown_report,
+    format_trend_markdown,
     DEFAULT_THRESHOLD,
 )
 
@@ -320,43 +324,43 @@ class TestGetGrade(unittest.TestCase):
     """评分等级功能。"""
 
     def test_grade_a(self):
-        """85分以上为A（优秀）。"""
+        """85分以上为A（统计高分段）。"""
         grade, label = get_grade(85)
         self.assertEqual(grade, "A")
-        self.assertEqual(label, "优秀")
+        self.assertEqual(label, "统计高分段")
         grade, label = get_grade(100)
         self.assertEqual(grade, "A")
-        self.assertEqual(label, "优秀")
+        self.assertEqual(label, "统计高分段")
 
     def test_grade_b(self):
-        """70-84分为B（良好）。"""
+        """70-84分为B（统计中高分段）。"""
         grade, label = get_grade(70)
         self.assertEqual(grade, "B")
-        self.assertEqual(label, "良好")
+        self.assertEqual(label, "统计中高分段")
         grade, label = get_grade(84)
         self.assertEqual(grade, "B")
 
     def test_grade_c(self):
-        """55-69分为C（合格）。"""
+        """55-69分为C（统计中分段）。"""
         grade, label = get_grade(55)
         self.assertEqual(grade, "C")
-        self.assertEqual(label, "合格")
+        self.assertEqual(label, "统计中分段")
         grade, label = get_grade(69)
         self.assertEqual(grade, "C")
 
     def test_grade_d(self):
-        """40-54分为D（需修改）。"""
+        """40-54分为D（统计低分段）。"""
         grade, label = get_grade(40)
         self.assertEqual(grade, "D")
-        self.assertEqual(label, "需修改")
+        self.assertEqual(label, "统计低分段")
         grade, label = get_grade(54)
         self.assertEqual(grade, "D")
 
     def test_grade_f(self):
-        """0-39分为F（不合格）。"""
+        """0-39分为F（统计极低分段）。"""
         grade, label = get_grade(0)
         self.assertEqual(grade, "F")
-        self.assertEqual(label, "不合格")
+        self.assertEqual(label, "统计极低分段")
         grade, label = get_grade(39)
         self.assertEqual(grade, "F")
 
@@ -549,6 +553,121 @@ class TestScoreChapter(unittest.TestCase):
         self.assertEqual(result["char_count"]["chinese"], cjk)
 
 
+class TestStatisticalBoundary(unittest.TestCase):
+    """统计高分、词频上升和旧报告均不能生成文学验收结论。"""
+
+    def test_high_score_does_not_run_semantic_review_or_machine_gates(self):
+        text = SAMPLE_CHAPTER + "\n\n他得意而兴奋。谁在外面？"
+        result = score_chapter(text, 1)
+        self.assertGreaterEqual(result["total_score"], 85)
+        self.assertEqual(result["grade"], "A")
+        self.assertTrue(result["passed"])
+        self.assertEqual(result.get("score_scope"), "heuristic_observation")
+        self.assertEqual(result.get("passed_scope"), "heuristic_threshold_only")
+        self.assertEqual(result.get("heuristic_threshold"),
+                         {"value": DEFAULT_THRESHOLD, "met": True})
+        self.assertEqual(result.get("semantic_review", {}).get("status"), "not_run")
+        self.assertIsNone(result["semantic_review"]["judgment"])
+        self.assertEqual(result.get("machine_gates", {}).get("status"), "not_run")
+        self.assertEqual(result["machine_gates"]["checks"], [])
+
+    def test_numerical_scores_and_grade_letters_remain_compatible(self):
+        for text, expected_total, expected_grade in [
+            (SAMPLE_CHAPTER, 82.9, "B"),
+            (AI_HEAVY_TEXT, 55.5, "C"),
+            (NO_CJK_TEXT, 28.0, "F"),
+        ]:
+            with self.subTest(grade=expected_grade):
+                result = score_chapter(text, 1)
+                self.assertEqual(result["total_score"], expected_total)
+                self.assertEqual(result["grade"], expected_grade)
+                self.assertEqual(result["passed"], expected_total >= DEFAULT_THRESHOLD)
+
+    def test_quiet_scene_keywords_are_observations_not_rewrite_orders(self):
+        quiet_text = "她收碗，摆筷，把信纸抹平。雨停了，屋檐还滴着水。" * 10
+        result = score_emotional_impact(quiet_text)
+        self.assertEqual(result["details"]["emotion_density"], 0)
+        self.assertEqual(result["details"]["action_density"], 0)
+        self.assertEqual(result.get("score_scope"), "heuristic_observation")
+        self.assertIn("场景意图", result.get("limitations", ""))
+        self.assertIn("不能据此要求改写", result.get("limitations", ""))
+        issues = "\n".join(result["issues"])
+        self.assertIn("命中", issues)
+        self.assertNotIn("情绪密度过低", issues)
+        self.assertNotIn("动作描写过少", issues)
+
+    def test_keyword_padding_never_produces_an_emotional_quality_judgment(self):
+        quiet_text = "她收碗，摆筷，把信纸抹平。雨停了，屋檐还滴着水。" * 10
+        padded_text = quiet_text + "\n\n兴奋激动开心喜悦。\n\n愤怒悲伤恐惧绝望。\n\n幸福满足温暖感动。"
+        quiet = score_chapter(quiet_text, 1)
+        padded = score_chapter(padded_text, 2)
+        self.assertGreater(padded["dimensions"]["emotional_impact"]["score"],
+                           quiet["dimensions"]["emotional_impact"]["score"])
+        for result in (quiet, padded):
+            self.assertEqual(result.get("semantic_review", {}).get("status"), "not_run")
+            rendered = format_markdown_report(result)
+            self.assertIn("情绪词与动作词统计", rendered)
+            self.assertIn("不能据此要求改写", rendered)
+            self.assertNotIn("情感冲击力", rendered)
+
+    @staticmethod
+    def legacy_report():
+        """保存于 schema 1.0.0 的字段形状，不含任何新边界字段。"""
+        return {
+            "schema_version": "1.0.0", "version": "1.0.0", "chapter": 1,
+            "total_score": 96.0, "grade": "A", "grade_label": "优秀", "passed": True,
+            "timestamp": "2026-09-05 12:00:00", "char_count": {"total": 1200, "chinese": 1000},
+            "dimensions": {"emotional_impact": {"score": 90.0, "details": {},
+                                                  "issues": ["情绪密度过低", "动作描写过少"]}},
+            "radar": [{"key": "emotional_impact", "dimension": "情感冲击力",
+                       "weight": 15, "score": 90.0}],
+            "issues": ["[情感冲击力] 情绪密度过低", "[情感冲击力] 动作描写过少"],
+            "issue_count": 2,
+        }
+
+    def test_legacy_markdown_does_not_repeat_literary_grade_or_pass(self):
+        legacy = self.legacy_report()
+        original = json.dumps(legacy, ensure_ascii=False, sort_keys=True)
+        rendered = format_markdown_report(legacy)
+        self.assertIn("启发式", rendered)
+        self.assertIn("语义复核**: 未运行", rendered)
+        self.assertIn("机器门禁**: 未运行", rendered)
+        self.assertIn("统计阈值", rendered)
+        self.assertIn("统计高分段", rendered)
+        for overclaim in ("优秀", "**状态**: 通过", "情感冲击力", "情绪密度过低", "动作描写过少"):
+            self.assertNotIn(overclaim, rendered)
+        self.assertEqual(json.dumps(legacy, ensure_ascii=False, sort_keys=True), original)
+
+    def test_old_and_new_trend_files_keep_numbers_without_inferring_review(self):
+        with tempfile.TemporaryDirectory(prefix="lns_qs_trend_") as temp_dir:
+            book_dir = Path(temp_dir)
+            score_dir = book_dir / "追踪" / "质量评分"
+            score_dir.mkdir(parents=True)
+            old_path = score_dir / "quality_ch1.json"
+            old_path.write_text(json.dumps(self.legacy_report(), ensure_ascii=False), encoding="utf-8")
+            old_bytes = old_path.read_bytes()
+            fresh = score_chapter(SAMPLE_CHAPTER, 2)
+            (score_dir / "quality_ch2.json").write_text(json.dumps(fresh, ensure_ascii=False), encoding="utf-8")
+            result = analyze_trend(book_dir, 1, 2)
+            self.assertTrue(result["ok"])
+            self.assertEqual(result["chapter_count"], 2)
+            self.assertEqual([c["total"] for c in result["chapters"]], [96.0, 82.9])
+            self.assertEqual(result["avg_score"], 89.5)
+            self.assertEqual(result.get("score_scope"), "heuristic_observation")
+            self.assertEqual(result.get("semantic_review", {}).get("status"), "not_run")
+            self.assertEqual(result.get("machine_gates", {}).get("status"), "not_run")
+            for chapter in result["chapters"]:
+                self.assertEqual(chapter.get("semantic_review", {}).get("status"), "not_run")
+                self.assertEqual(chapter.get("machine_gates", {}).get("status"), "not_run")
+            rendered = format_trend_markdown(result)
+            self.assertIn("启发式", rendered)
+            self.assertIn("语义复核**: 未运行", rendered)
+            self.assertIn("机器门禁**: 未运行", rendered)
+            self.assertNotIn("优秀", rendered)
+            self.assertNotIn("情感冲击力", rendered)
+            self.assertEqual(old_path.read_bytes(), old_bytes)
+
+
 class TestCLIScore(unittest.TestCase):
     """CLI score 子命令测试（子进程调用）。"""
 
@@ -576,6 +695,8 @@ class TestCLIScore(unittest.TestCase):
         self.assertIn("grade", data)
         self.assertIn("dimensions", data)
         self.assertEqual(data["chapter"], 1)
+        self.assertEqual(data.get("semantic_review", {}).get("status"), "not_run")
+        self.assertEqual(data.get("machine_gates", {}).get("status"), "not_run")
 
     def test_score_with_book_dir(self):
         """指定 --book-dir 时评分结果落盘到 JSON 文件。"""
@@ -617,7 +738,7 @@ class TestCLIScore(unittest.TestCase):
         self.assertIn("维度评分", result.stdout)
 
     def test_score_low_quality_exit_code(self):
-        """低质量文本（无汉字）退出码为 1（未通过阈值）。"""
+        """无汉字样本退出码为 1（低于统计阈值，不评价文学质量）。"""
         bad_path = self.book_dir / "正文" / "第002章_差.md"
         bad_path.write_text("Hello World 12345", encoding="utf-8")
         result = subprocess.run(
@@ -626,7 +747,7 @@ class TestCLIScore(unittest.TestCase):
             capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30,
         )
         self.assertEqual(result.returncode, 1,
-                         "低质量文本应返回退出码 1（未通过阈值）")
+                         "该样本应返回退出码 1（低于统计阈值）")
 
     def test_score_chapter_number_in_output(self):
         """输出 JSON 中包含正确的章号。"""

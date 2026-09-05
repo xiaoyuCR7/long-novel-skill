@@ -803,10 +803,13 @@ def _required_context(book_dir: Path, chapter: int, reader=None):
         state = "".join(kept)
     add("character_state", state_path, state)
     foreshadow_path = book_dir / "追踪/伏笔台账.md"
-    add("foreshadowing", foreshadow_path,
-        extract_active_foreshadows(read(foreshadow_path), chapter))
     timeline_path = book_dir / "追踪/时间线.md"
-    add("timeline", timeline_path, extract_relevant_timeline(read(timeline_path), chapter))
+    for kind, path in (("foreshadowing", foreshadow_path), ("timeline", timeline_path)):
+        raw = read(path)
+        selection = _tracking_selection(raw, kind)
+        add(kind, path, selection.pop("content") if raw.strip() else "")
+        if kind in components:
+            components[kind]["selection"] = selection
     if chapter > 1:
         previous = [s for s in parse_chapter_summaries(book_dir, reader=reader) if s["chapter"] == chapter - 1]
         if len(previous) == 1 and _summary_is_reliable(previous[0]["raw"]):
@@ -1098,6 +1101,12 @@ def _select_context_unlocked(book_dir: Path, target_chapter: int, max_chars: int
                 reader.sources[path]["required"] = True
     context["source_manifest"] = list(reader.sources.values())
     context["omitted_sources"] = list(reader.omitted.values())
+    context["selection_receipt"] = {
+        "required_chars": required_chars, "budget_chars": max_chars,
+        "brief_chars": context["brief_chars"], "semantic_review": "not_run",
+        "tracking": {kind: required[kind]["selection"] for kind in
+                     ("foreshadowing", "timeline") if kind in required},
+    }
     context["package_sha256"] = _package_sha256(context)
 
     return context
@@ -1145,57 +1154,91 @@ def extract_mentioned_characters(chapter_content: str, book_dir: Path) -> List[s
     return list(dict.fromkeys(mentioned))
 
 
-def extract_active_foreshadows(foreshadow_content: str, target_chapter: int) -> str:
-    """保留未结生命周期分节；未知旧格式保持全文，避免误删硬约束。"""
-    lines = foreshadow_content.splitlines()
-    selected, section, recognized = [], None, False
-    for line in lines:
-        heading = re.match(r"^#{1,6}\s*(.+)$", line)
-        if heading:
-            title = heading.group(1)
-            if any(marker in title for marker in ("🔴", "🟡", "🟢", "超期", "活跃", "长线", "未结")):
-                section, recognized = "active", True
-                selected.append(line)
-                continue
-            if "✅" in title or "已回收" in title or "归档" in title:
-                section, recognized = "resolved", True
-                continue
-            section = None
-            if len(selected) == 0 and line.startswith("# "):
-                selected.append(line)
-            continue
-        if section == "active":
-            selected.append(line)
-        elif section is None and any(marker in line for marker in
-                                     ("🔴", "🟡", "🟢", "待回收", "未回收", "超期")):
-            selected.append(line)
+def _tracking_selection(content: str, kind: str) -> Dict[str, Any]:
+    """Only omit explicitly archived sections; retain unknown siblings verbatim.
 
-    if not recognized:
-        return foreshadow_content
-    meaningful = [line for line in selected if line.strip() and not line.lstrip().startswith("#")]
-    return "\n".join(selected).strip() if meaningful else "# 活跃伏笔\n（无未结伏笔）"
+    Headings define lifecycle, never chapter numbers alone. A nested heading
+    inherits its parent's classification unless it explicitly states otherwise.
+    This is a layout diagnosis, not a claim that an archived fact is false.
+    """
+    lines = content.splitlines(keepends=True)
+    active = (("🔴", "🟡", "🟢", "超期", "活跃", "长线", "未结", "未回收", "待回收")
+              if kind == "foreshadowing" else ("当前", "锚点", "承诺", "约束", "待办", "未完成", "分支"))
+    # Exact lifecycle labels, not lexical matches such as "历史真相" / "未归档".
+    archive_labels = (("已回收", "归档", "已归档", "历史归档") if kind == "foreshadowing"
+                      else ("历史记录", "历史归档", "归档", "已归档", "已完成", "已结束"))
+    starts = [(i, re.match(r"^(#{1,6})[ \t]+(.+)", line)) for i, line in enumerate(lines)]
+    starts = [(i, match) for i, match in starts if match]
+    if not starts or starts[0][0] != 0:
+        starts.insert(0, (0, None))
+    sections, stack, recognized = [], [], False
+    selected = []
+    for pos, (start, match) in enumerate(starts):
+        end = starts[pos + 1][0] if pos + 1 < len(starts) else len(lines)
+        level, title = (len(match.group(1)), match.group(2).strip()) if match else (0, "")
+        while stack and stack[-1][0] >= level:
+            stack.pop()
+        parent_kind = stack[-1][1] if stack else "unknown"
+        pending = bool(re.search(r"(?:未|待|尚未|尚待|不应|不要).{0,4}(?:归档|回收|完成|结束)|(?:归档|回收)前", title))
+        clean_title = re.sub(r"^[✅\s]+", "", title).strip()
+        explicit_archive = any(re.fullmatch(re.escape(label) + r"(?:\s*[（(][^）)]*[）)])?", clean_title)
+                               for label in archive_labels)
+        if pending or any(word in title for word in active):
+            state, recognized = "active", True
+        elif explicit_archive or title.strip() == "✅":
+            state, recognized = "archived", True
+        else:
+            state = parent_kind
+        stack.append((level, state))
+        chunk = "".join(lines[start:end])
+        structural = bool(match and not "".join(lines[start + 1:end]).strip())
+        keep = state != "archived"
+        reason = "explicit_archive" if not keep else (
+            "active_constraint" if state == "active" else "heading" if structural else "unknown_preserved")
+        sections.append({"heading": title, "start_line": start + 1, "end_line": end,
+                         "selected": keep, "reason": reason, "chars": count_chars(chunk)})
+        if keep:
+            selected.append(chunk)
+    chosen = "".join(selected).strip() if recognized else content
+    if kind == "foreshadowing" and recognized and not any(
+            line.strip() and not line.lstrip().startswith("#") for line in chosen.splitlines()):
+        chosen = "# 活跃伏笔\n（无未结伏笔）"
+    return {"content": chosen, "mode": "lifecycle_sections" if recognized else "legacy_preserved",
+            "source_chars": count_chars(content), "selected_chars": count_chars(chosen),
+            "omitted_chars": sum(s["chars"] for s in sections if not s["selected"]),
+            "sections": sections,
+            "next_action": "context_manager.py inspect-state：生成工程外整理候选，未知条目须人工核对",
+            "manual_review_required": not recognized or any(s["reason"] == "unknown_preserved" for s in sections)}
+
+
+def extract_active_foreshadows(foreshadow_content: str, target_chapter: int) -> str:
+    """Lifecycle selection; unknown constraints are kept regardless of age."""
+    return _tracking_selection(foreshadow_content, "foreshadowing")["content"]
 
 
 def extract_relevant_timeline(timeline_content: str, target_chapter: int) -> str:
-    """选择当前锚点/承诺/约束；无法识别的旧格式保持全文。"""
-    sections = re.split(r"(?=^##\s+)", timeline_content, flags=re.MULTILINE)
-    if len(sections) == 1:
-        return timeline_content
-    active_words = ("当前", "锚点", "承诺", "约束", "待办", "未完成", "分支")
-    archive_words = ("历史", "归档", "已完成", "已结束")
-    selected = [sections[0]] if sections[0].strip() else []
-    recognized = active_found = False
-    for section in sections[1:]:
-        heading = section.splitlines()[0] if section.splitlines() else ""
-        if any(word in heading for word in active_words):
-            selected.append(section)
-            recognized = True
-            active_found = True
-        elif any(word in heading for word in archive_words):
-            recognized = True
-    if recognized and active_found:
-        return "".join(selected).strip()
-    return timeline_content
+    """Preserve unknown state; an old chapter number is not proof of expiry."""
+    return _tracking_selection(timeline_content, "timeline")["content"]
+
+
+def inspect_tracking_state(book_dir: Path, chapter: int) -> Dict[str, Any]:
+    """Read-only proposal with original content; no automatic semantic migration."""
+    from common import canonical_read_lock
+    if chapter < 1:
+        raise ValueError("chapter must be positive")
+    reader = _ContextReader(Path(book_dir))
+    proposal = {"schema_version": 1, "chapter": chapter, "applied": False,
+                "manual_review_required": True, "sources": {}}
+    with canonical_read_lock(book_dir):
+        for kind, relative in (("timeline", "追踪/时间线.md"), ("foreshadowing", "追踪/伏笔台账.md")):
+            content = reader(Path(book_dir) / relative)
+            if not content.strip():
+                raise ValueError("required_context_missing: " + relative)
+            selection = _tracking_selection(content, kind)
+            selection.pop("content")
+            proposal["sources"][kind] = dict(selection, original_content=content,
+                                              source=reader.sources[relative])
+    return proposal
 
 
 def _render_brief_context(context: Dict[str, Any]) -> str:
@@ -1242,6 +1285,11 @@ def generate_context_report(context: Dict[str, Any]) -> str:
         lines.append(f"当前阶段：{stage_label} ({stage})")
     lines.append(f"预算上限：{context['max_chars']} 字符")
     lines.append(f"实际使用：{context['total_chars']} 字符 ({context['budget_used']}%)")
+    for kind, selection in context.get("selection_receipt", {}).get("tracking", {}).items():
+        lines.append("- {} 选取：{}，保留 {} 字符，省略明确归档 {} 字符。".format(
+            kind, selection["mode"], selection["selected_chars"], selection["omitted_chars"]))
+        if selection.get("manual_review_required"):
+            lines.append("  存在旧格式或未知分区，未按章龄删除；" + selection["next_action"])
     if "source_manifest" in context:
         lines.append("来源核验范围：清单中的实际读取文件及 state-only 缺卡前提；复用前运行 verify。哈希不证明语义正确。")
         lines.append("上下文包 SHA-256：" + context.get("package_sha256", ""))
@@ -1319,6 +1367,11 @@ def main():
     p_verify.add_argument("book_dir", help="书籍工程目录（不采用包内目录）")
     p_verify.add_argument("--context", required=True, help="待核验的 JSON 上下文包")
 
+    p_inspect = sub.add_parser("inspect-state", help="只读检查追踪布局，生成工程外整理候选")
+    p_inspect.add_argument("book_dir")
+    p_inspect.add_argument("--chapter", type=int, required=True)
+    p_inspect.add_argument("--output", help="工程外新建 JSON 文件；省略则只输出 JSON")
+
     # compress 命令
     p_compress = sub.add_parser("compress", help="压缩多章摘要为回顾段")
     p_compress.add_argument("book_dir", help="书籍工程目录")
@@ -1362,6 +1415,26 @@ def main():
         else:
             print(output)
         if not context["ready"]:
+            sys.exit(1)
+
+    elif args.command == "inspect-state":
+        try:
+            book_dir = Path(args.book_dir).absolute()
+            result = inspect_tracking_state(book_dir, args.chapter)
+            output = json.dumps(result, ensure_ascii=False, indent=2)
+            if args.output:
+                target = Path(args.output).resolve()
+                try:
+                    target.relative_to(book_dir.resolve())
+                except ValueError:
+                    pass
+                else:
+                    raise ValueError("output_must_be_outside_book")
+                with target.open("x", encoding="utf-8") as handle:
+                    handle.write(output)
+            print(output)
+        except (OSError, ValueError, RuntimeError) as exc:
+            print(json.dumps({"error": str(exc), "applied": False}, ensure_ascii=False), file=sys.stderr)
             sys.exit(1)
 
     elif args.command == "verify":

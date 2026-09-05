@@ -1,0 +1,143 @@
+{
+  "schema_version": 1,
+  "scope": "synthetic_retrieval_fixture",
+  "documents": [
+    {
+      "id": "ch01-key",
+      "text": "第1章，铜钥匙交给林枝保管。"
+    },
+    {
+      "id": "ch02-key",
+      "text": "第2章，林枝将铜钥匙交给唐序。"
+    },
+    {
+      "id": "ch03-key",
+      "text": "第3章，唐序把铜钥匙放进暗房匣子。"
+    },
+    {
+      "id": "ch04-rumor",
+      "text": "第4章，店主问林枝是否杀了苏明。这只是疑问，没有证据。"
+    },
+    {
+      "id": "ch05-date",
+      "text": "第5章，收据记录的日期是六月十二日。"
+    },
+    {
+      "id": "ch06-calendar",
+      "text": "第6章，母亲日历在六月十二日标着照相馆。"
+    },
+    {
+      "id": "ch07-vow",
+      "text": "第7章，林枝承诺不泄露证人的地址。"
+    },
+    {
+      "id": "ch08-deadline",
+      "text": "第8章，关阀和核验全部完成之后，两人同时点火。"
+    },
+    {
+      "id": "ch09-refusal",
+      "text": "第9章，林枝拒绝拜师，玉佩自己保管。"
+    },
+    {
+      "id": "ch10-ending",
+      "text": "第10章，玉佩归还，误会讲清，本章承诺闭合。"
+    },
+    {
+      "id": "ch11-alias",
+      "text": "第11章，老唐是唐序在照相馆的称呼。"
+    },
+    {
+      "id": "ch12-negation",
+      "text": "第12章，记录员指出唐序没有进入密室。"
+    }
+  ],
+  "queries": [
+    {
+      "id": "q01",
+      "query": "铜钥匙的交接",
+      "relevant": [
+        "ch01-key",
+        "ch02-key",
+        "ch03-key"
+      ]
+    },
+    {
+      "id": "q02",
+      "query": "铜钥匙最后在哪里",
+      "relevant": [
+        "ch03-key"
+      ]
+    },
+    {
+      "id": "q03",
+      "query": "林枝杀苏明是否有证据",
+      "relevant": [
+        "ch04-rumor"
+      ]
+    },
+    {
+      "id": "q04",
+      "query": "收据日期",
+      "relevant": [
+        "ch05-date"
+      ]
+    },
+    {
+      "id": "q05",
+      "query": "六月十二日的记录",
+      "relevant": [
+        "ch05-date",
+        "ch06-calendar"
+      ]
+    },
+    {
+      "id": "q06",
+      "query": "证人地址的承诺",
+      "relevant": [
+        "ch07-vow"
+      ]
+    },
+    {
+      "id": "q07",
+      "query": "点火需要哪些前置条件",
+      "relevant": [
+        "ch08-deadline"
+      ]
+    },
+    {
+      "id": "q08",
+      "query": "拜师玉佩",
+      "relevant": [
+        "ch09-refusal"
+      ]
+    },
+    {
+      "id": "q09",
+      "query": "玉佩归还和误会",
+      "relevant": [
+        "ch10-ending"
+      ]
+    },
+    {
+      "id": "q10",
+      "query": "老唐的身份",
+      "relevant": [
+        "ch11-alias"
+      ]
+    },
+    {
+      "id": "q11",
+      "query": "唐序进入密室了吗",
+      "relevant": [
+        "ch12-negation"
+      ]
+    },
+    {
+      "id": "q12",
+      "query": "母亲照相馆日期",
+      "relevant": [
+        "ch06-calendar"
+      ]
+    }
+  ]
+}

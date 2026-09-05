@@ -76,25 +76,30 @@
     "homepage": "https://github.com/xiaoyuCR7/long-novel-skill",
     "repository": "https://github.com/xiaoyuCR7/long-novel-skill",
     "created": "2026-07-26",
-    "last_reviewed": "2026-08-31",
+    "last_reviewed": "2026-09-05",
     "review_interval_days": 90,
     "genre_cards_count": 34,
-    "scripts_count": 44,
-    "tests_count": 1126,
-    "craft_files_count": 47,
-    "workflow_files_count": 27,
-    "reference_files_count": 112
+    "scripts_count": 46,
+    "tests_count": 1192,
+    "craft_files_count": 49,
+    "workflow_files_count": 29,
+    "reference_files_count": 116
   },
   "source_references": [
     {
       "name": "novel-creator-skill",
       "contribution": "五层一致性、Beat Sheet、节奏配额、语义级节奏审查、知识图谱、联网调研、风格库设计",
-      "license": "MIT"
+      "license": "unverified (README declares MIT)",
+      "repository": "https://github.com/leenbj/novel-creator-skill",
+      "revision": "a327428ea26962163f823ad74001243f91bc7738",
+      "license_evidence": "GitHub API did not identify a license; no standalone LICENSE found in the reviewed tree"
     },
     {
       "name": "oh-story-claudecode",
       "contribution": "7 Gate、拆文、扫榜、短篇、对话精通、悬念分级、信息团、爆款语料设计",
-      "license": "MIT"
+      "license": "MIT",
+      "repository": "https://github.com/zenstory-ai/oh-story-claudecode",
+      "revision": "5de060f9a47e7c4781c81edb320436b772e2955e"
     }
   ],
   "features": {
@@ -117,7 +122,7 @@
       "7 Gate去AI腔",
       "节奏三档制与A/B/C配额",
       "语义级节奏审查",
-      "质量评分系统（七维加权）",
+      "七维启发式文本统计（不代表语义审核）",
       "门禁修复计划",
       "正文显式约束与场景可信度审计",
       "恢复后文学复审",

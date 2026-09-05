@@ -425,6 +425,15 @@ Agent 会提示「可以切换到高级模式了」。作者也可以随时说�
 
 ## 模式说明
 
+新增工具入口（仅在对应请求时加载）：
+
+| 请求 | 命令与说明 |
+|---|---|
+| 记住/更正/忘记偏好 | `scripts/author_preferences.py`，见 `author-preferences.md`；不得从本次措辞推断长期习惯 |
+| 改章影响清单 | `python scripts/story_graph.py impact "{book}" --chapter {N}`，只读候选 |
+| 旧追踪格式诊断 | `python scripts/context_manager.py inspect-state "{book}" --chapter {N}`，不自动整理追踪 |
+| Skill 评测 | `python scripts/skill_eval.py validate`，案例与真实记录方式见 `evidence-review.md` |
+
 - **新手模式**：谨慎执行，每一步确认。适合刚开书或首次使用。
 - **高级模式**：信任执行，只在关键节点确认。适合 30 章以后或已熟悉流程。
 - **通用**：两种模式均可使用，执行方式相同。

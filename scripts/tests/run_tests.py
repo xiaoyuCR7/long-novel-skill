@@ -59,6 +59,8 @@ TEST_MODULES = [
     "test_gate_artifacts_contract",
     "test_style_exemptions",
     "test_workflow_closure",
+    "test_author_preferences",
+    "test_skill_eval",
 ]
 
 # 测试目录与 scripts 目录

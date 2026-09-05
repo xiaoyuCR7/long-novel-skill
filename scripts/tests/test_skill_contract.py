@@ -384,6 +384,10 @@ class TestSkillContract(unittest.TestCase):
     def test_scene_example_does_not_introduce_unlicensed_clues(self):
         root = Path(__file__).resolve().parents[2]
         content = (root / "references/craft/scene-rendering.md").read_text(encoding="utf-8")
+        example_paths = [path for path in referenced_local_paths(content)
+                         if path.endswith("/scene-examples.md")]
+        self.assertEqual(len(example_paths), 1, "scene teaching examples need one explicit reference")
+        content = (root / example_paths[0]).read_text(encoding="utf-8")
         before, after = content.split("### Before：", 1)[1].split("### After：", 1)
         after = after.split("## 去 AI", 1)[0]
         for clue in ("银盐", "收据", "母亲身旁"):

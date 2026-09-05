@@ -80,6 +80,65 @@ class WorkflowClosureTests(unittest.TestCase):
         level = len(heading) - len(heading.lstrip("#"))
         return re.split(r"(?m)^#{1," + str(level) + r"} ", remainder, maxsplit=1)[0]
 
+    def conditional_rule_path(self, document):
+        """Only follow an explicit maintained-rule reference, never a guessed sibling."""
+        text = (ROOT / document).read_text(encoding="utf-8")
+        references = re.findall(r"\*\*条件规则正文\*\*：`(references/craft/[a-z-]+\.md)`", text)
+        self.assertEqual(len(references), 1, "one explicit conditional contract is required: " + document)
+        target = (ROOT / references[0]).resolve()
+        self.assertEqual(target.parent, (ROOT / "references/craft").resolve())
+        self.assertTrue(target.is_file(), "missing conditional contract: " + references[0])
+        return references[0]
+
+    def audit_with_conditional_rules(self, document, heading):
+        rules = self.conditional_rule_path(document)
+        return self.section(document, heading) + "\n" + (ROOT / rules).read_text(encoding="utf-8")
+
+    def test_specialized_scene_rules_are_mandatory_only_when_triggered(self):
+        for document, heading in (
+            ("references/craft/scene-rendering.md", "## 场景交付审计卡"),
+            ("references/workflow/chapter-loop.md", "### Step 3A：形成章意图（blocking）"),
+        ):
+            with self.subTest(document=document):
+                routing = self.section(document, heading)
+                self.assertEqual(self.conditional_rule_path(document), "references/craft/scene-action-audit.md")
+                for marker in ("时间压力", "截止", "窗口", "耗时", "并行汇合", "共同或同时",
+                               "物件交接", "必须加载", "全文", "写前", "未触发", "不加载"):
+                    self.assertIn(marker, routing)
+                self.assertIn("无法读取", routing)
+                self.assertIn("停止", routing)
+                self.assertNotIn("每章必须加载专项全文", routing)
+
+    def test_specialized_action_rules_have_one_body_outside_default_files(self):
+        rules = (ROOT / self.conditional_rule_path("references/craft/scene-rendering.md")).read_text(encoding="utf-8")
+        for heading in ("### 动作预算", "### 时间行动闭环", "### 物件归属"):
+            self.assertIn(heading, rules)
+        for document in ("references/craft/scene-rendering.md", "references/workflow/chapter-loop.md"):
+            text = (ROOT / document).read_text(encoding="utf-8")
+            self.assertNotIn("只有输入明确把受保护下游动作指定为多名参与者共同或同时执行时", text)
+        self.assertIn("不新增持久 schema", rules)
+        self.assertIn("共享现有最多两轮", rules)
+
+    def test_scene_examples_are_conditional_and_preserve_authorized_counterexamples(self):
+        scene = (ROOT / "references/craft/scene-rendering.md").read_text(encoding="utf-8")
+        self.assertIn("references/craft/scene-examples.md", scene)
+        self.assertIn("需要示例时", scene)
+        self.assertNotIn("## 完整示例：五行章纲变成两个交错场景", scene)
+        examples = ROOT / "references/craft/scene-examples.md"
+        self.assertTrue(examples.is_file(), "the moved teaching examples must remain available")
+        text = examples.read_text(encoding="utf-8")
+        for marker in ("五行章纲变成两个交错场景", "Scene A", "Scene B", "必要验收仍在",
+                       "风险已变", "不能靠添加动作", "代词自然时无需全部改成人名"):
+            self.assertIn(marker, text)
+        for heading, markers in {
+            "## 人物选择": ("授权前提", "有限帮助", "合法反例", "不能"),
+            "## 安静反应": ("授权前提", "情绪词", "合法反例", "不能"),
+            "## 知识边界": ("授权前提", "误信", "合法反例", "不能"),
+        }.items():
+            section = self.section("references/craft/scene-examples.md", heading)
+            for marker in markers:
+                self.assertIn(marker, section)
+
     def test_fragment_polish_does_not_inherit_whole_chapter_acceptance(self):
         # This checks routing boundaries, not whether an LLM preserves emotion well.
         fragment = self.section("assets/agents/anti-ai-editor.md", "## 片段模式")
@@ -150,7 +209,8 @@ class WorkflowClosureTests(unittest.TestCase):
         }
         for heading, markers in section_markers.items():
             with self.subTest(section=heading):
-                section = self.section(document, heading)
+                source = self.conditional_rule_path(document) if heading in ("### 动作预算", "### 物件归属") else document
+                section = self.section(source, heading)
                 for marker in markers:
                     self.assertIn(marker, section)
         audit = self.section(document, "## 场景交付审计卡")
@@ -158,11 +218,11 @@ class WorkflowClosureTests(unittest.TestCase):
                        "P1/P2", "不阻断", "私有", "不输出", "不固定四段式"):
             with self.subTest(marker=marker):
                 self.assertIn(marker, audit)
-        custody = self.section(document, "### 物件归属")
+        custody = self.section(self.conditional_rule_path(document), "### 物件归属")
         self.assertIn("再次依赖该物件前", custody)
 
     def test_scene_rendering_defines_temporal_action_loop(self):
-        temporal = self.section("references/craft/scene-rendering.md", "### 时间行动闭环")
+        temporal = self.section(self.conditional_rule_path("references/craft/scene-rendering.md"), "### 时间行动闭环")
         for marker in (
             "合法时间来源", "现场已建立事实", "时间证据", "改变后续行动",
             "哪一步", "消耗了窗口", "不设最低报秒次数",
@@ -226,14 +286,15 @@ class WorkflowClosureTests(unittest.TestCase):
         self.assertNotRegex(checklist_flat, r"至少\s*\d+\s*(?:次|个).{0,20}(?:报时|时间锚点|报告)")
 
     def test_chapter_loop_repairs_temporal_perceptibility_inside_existing_audit(self):
-        audit = self.section("references/workflow/chapter-loop.md", "## 交付前场景审计（blocking）")
+        audit = self.audit_with_conditional_rules("references/workflow/chapter-loop.md", "## 交付前场景审计（blocking）")
         audit_compact = "".join(audit.split())
         for marker in (
-            "合法时间来源", "时间证据", "改变后续行动", "哪一步消耗",
+            "合法时间来源", "时间证据", "改变后续行动",
             "不新增持久 schema", "不设最低报秒次数",
         ):
             with self.subTest(marker=marker):
                 self.assertIn("".join(marker.split()), audit_compact)
+        self.assertRegex(audit_compact, r"哪一步(?:或哪段等待)?消耗(?:了)?窗口")
         self.assertIn("关键事实或整体因果无法判定", audit_compact)
         self.assertNotIn("关键事实或因果无法判定", audit_compact)
         self.assertRegex(audit_compact, r"未授权.{0,40}(?:计时器|测时来源).{0,80}(?:blocking/P0|P0)")
@@ -283,11 +344,11 @@ class WorkflowClosureTests(unittest.TestCase):
         return re.sub(r"\s+", "", value)
 
     def _temporal_contract_carriers(self):
-        canonical = self.section("references/craft/scene-rendering.md", "### 时间行动闭环")
+        canonical = self.section(self.conditional_rule_path("references/craft/scene-rendering.md"), "### 时间行动闭环")
         novelist = self.section("assets/agents/novelist.md", "## 输出前私有预检")
         reviewer_checklist = self.section("assets/agents/consistency-reviewer.md", "## 必查清单（不得省略）")
         reviewer_severity = self.section("assets/agents/consistency-reviewer.md", "## 报告格式")
-        chapter_audit = self.section("references/workflow/chapter-loop.md", "## 交付前场景审计（blocking）")
+        chapter_audit = self.audit_with_conditional_rules("references/workflow/chapter-loop.md", "## 交付前场景审计（blocking）")
         step5 = self.section("references/workflow/editorial-spawn.md", "### Step 5：并行审核（反AI编辑 + 连载核实官）")
         reviewer_message = step5.split("[TO: consistency-reviewer]", 1)[1].split("```", 1)[0]
         step6 = self.section("references/workflow/editorial-spawn.md", "### Step 6：汇总判定（总编辑裁决）")

@@ -4,13 +4,19 @@
 题材规则（34 题材 + 九件事正文层规范）与平台规则（长篇番茄/起点/晋江/飞卢 + 短篇知乎盐言/番茄短篇/七猫短篇）
 做成可插拔的参考文件，按需加载。
 
+2026-09-05 的优化已记入 Unreleased：统计分数与语义审核分离，图谱保留未确认断言与来源，
+上下文未知约束不丢弃，作者偏好显式记忆；专项场景规则与案例按需读取。
+新增工具与诊断见 [证据工作流](references/workflow/evidence-review.md)，
+偏好用法见 [作者偏好](references/workflow/author-preferences.md)，
+24 个原始 Agent 场景见 [评测集](evals/README.md)。
+
 ## 能力证据边界
 
 ### 已实现并自动验证
 
 - 轻量意图路由、章意图契约、场景渲染、大纲不足时的 `outline_underfilled` 停止协议，以及正文与追踪的事务边界。
 - 本地 Dashboard 的路径隔离、revision 冲突保护、原子保存、备份和可恢复删除。
-- 44 个顶层 Python 脚本、112 份 reference（47 份 craft、27 份 workflow）、24 个 MCP tool；测试收集数由 `skill.json` 与发布契约核对。平台不支持的符号链接测试可能跳过，运行器分别报告通过、失败与跳过。
+- 46 个顶层 Python 脚本、116 份 reference（49 份 craft、29 份 workflow）、24 个 MCP tool；测试收集数由 `skill.json` 与发布契约核对。平台不支持的符号链接测试可能跳过，运行器分别报告通过、失败与跳过。
 - skill 契约、公开版本一致性、工作流闭环和关键文件事务均有确定性校验。
 - 限时场景的时间—行动闭环已验证：只使用合法时间来源，整体至少一项时间证据改变后续取舍、分工、顺序、风险判断或验收；主要耗时分支以授权动作中的过程进展、阻力变化或累计身体/环境反馈中的至少一项呈现窗口消耗。
 
@@ -132,7 +138,7 @@ cp assets/agents/*.md {书籍工程根}/.trae/agents/
 long-novel-skill/
 ├── SKILL.md                  # 核心入口：触发条件、工作流总览、Iron Law、题材/平台加载协议
 ├── references/
-│   ├── workflow/             # 工作流（当前 27 个）
+│   ├── workflow/             # 工作流（当前 29 个）
 │   │   ├── book-init.md          # 开书流程（长篇，对接 init_book.py）
 │   │   ├── chapter-loop.md       # 单章写作循环
 │   │   ├── outline-system.md     # 三级大纲 + 大纲锚点配额
@@ -157,7 +163,7 @@ long-novel-skill/
 │   │   ├── commands.md           # 命令入口表（30个命令+新手/高级分层）（v4.0 新增）
 │   │   ├── revision.md           # 大修流程
 │   │   └── book-scaling.md       # 百万字结构展开
-│   ├── craft/                # 通用写作工艺（当前 47 个）
+│   ├── craft/                # 通用写作工艺（当前 49 个）
 │   │   ├── iron-law.md           # 七条铁律
 │   │   ├── anti-ai-style.md      # 7 Gate 去AI腔（判定标准）
 │   │   ├── deslop-engineering.md  # 去AI味工程化（量化分级+删除优先+比例上限+白名单+收敛终止）
@@ -199,7 +205,7 @@ long-novel-skill/
 │   ├── agents/               # 编辑团队可部署资产（4 个角色 + README）
 │   └── style_library/        # 风格库（跨书复用）（v4.0 新增）
 │       └── index.json         # 风格库索引
-└── scripts/                  # 机械闸口、量化与验证工具（纯标准库，共 44 个）
+└── scripts/                  # 机械闸口、量化与验证工具（纯标准库，共 46 个）
     ├── common.py                 # 共享工具函数（文件I/O+文本处理+章节解析）（v6.0 新增）
     ├── config.py                 # 全局配置常量（目录结构+文件名+BM25参数）（v6.0 新增）
     ├── check_text.py             # 7 Gate + 字数 + 禁用词 + 毒句式 + 伏笔超期 + 量化打分 + 7类AI模式检测 + --deslop分级 + --whitelist
@@ -350,7 +356,7 @@ cp -R long-novel-skill ~/.agents/skills/
 
 ## 脚本说明
 
-44 个顶层脚本均为纯标准库实现并纳入 Python 3.8+ 语法检查；各 CLI 的退出码以其 `--help` 为准。
+46 个顶层脚本均为纯标准库实现并纳入 Python 3.8+ 语法检查；各 CLI 的退出码以其 `--help` 为准。
 脚本通过文件名约定与 `追踪/门禁/gate_chN.json`、`追踪/entity_index.json` 等约定路径互相协作，
 不依赖任何 agent，是质量底线。
 

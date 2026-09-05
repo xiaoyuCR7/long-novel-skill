@@ -11,6 +11,18 @@ from mcp_server.server import _entity_index_args, _rag_retriever_args, _story_gr
 
 
 class TestMcpPositionalQueries(unittest.TestCase):
+    def test_quality_trend_uses_book_positional_and_score_keeps_chapter(self):
+        from mcp_server.server import _quality_score_args, QualityScoreInput
+        self.assertEqual(QualityScoreInput(action="trend", book_dir="BOOK").book_dir, "BOOK")
+        with self.assertRaises(ValueError):
+            _quality_score_args("score", "BOOK", None, None)
+        self.assertEqual(_quality_score_args("trend", "BOOK", "IGNORED", 4), ["trend", "BOOK"])
+        self.assertEqual(_quality_score_args("score", "BOOK", "CHAPTER", 4),
+                         ["score", "CHAPTER", "--chapter", "4", "--book-dir", "BOOK"])
+
+    def test_chapter_impact_does_not_require_node(self):
+        self.assertEqual(_story_graph_args("impact", "BOOK", chapter=4), ["impact", "BOOK", "--chapter", "4"])
+
     def test_query_arguments_are_positional(self):
         self.assertEqual(_entity_index_args("semantic", "BOOK", "QUERY"), ["semantic", "BOOK", "QUERY"])
         self.assertEqual(_story_graph_args("query", "BOOK", "NODE"), ["query", "BOOK", "NODE"])

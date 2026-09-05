@@ -78,9 +78,12 @@ def _story_graph_args(action, book_dir, node=None, chapter=None, from_chapter=No
                       description=None, output=None, depth=1, from_scratch=False):
     args = [action, book_dir]
     if action in {"query", "impact"}:
-        if not node:
+        if not node and not (action == "impact" and chapter is not None):
             raise ValueError(f"{action} requires node")
-        args.append(node)
+        if node:
+            args.append(node)
+        if action == "impact" and chapter is not None:
+            args.extend(["--chapter", str(chapter)])
     if action == "query" and depth != 1:
         args.extend(["--depth", str(depth)])
     if action == "cascade":
@@ -105,6 +108,16 @@ def _rag_retriever_args(action, book_dir, query, top):
     if query:
         args.append(query)
     return args + ["--top", str(top)]
+
+
+def _quality_score_args(action, book_dir, chapter_file, chapter):
+    if action == "trend":
+        return ["trend", book_dir]
+    if action == "score":
+        if not chapter_file or chapter is None:
+            raise ValueError("score requires chapter_file and chapter")
+        return ["score", chapter_file, "--chapter", str(chapter), "--book-dir", book_dir]
+    raise ValueError("unsupported quality action")
 
 
 # 尝试导入mcp
@@ -202,7 +215,7 @@ class StoryGraphInput(BaseModel):
                        pattern="^(build|query|cascade|impact|export|status|update)$")
     book_dir: str = Field(..., description="书籍工程目录路径")
     node: Optional[str] = Field(default=None, description="节点名称")
-    chapter: Optional[int] = Field(default=None, description="update 的章节号", ge=1)
+    chapter: Optional[int] = Field(default=None, description="update 或 impact 的章节号", ge=1)
     from_chapter: Optional[int] = Field(default=None, description="cascade 起始章节", ge=1)
     description: Optional[str] = Field(default=None, description="cascade 改纲说明")
     output: Optional[str] = Field(default=None, description="export 输出文件")
@@ -261,12 +274,12 @@ class NovelFlowInput(BaseModel):
 
 
 class QualityScoreInput(BaseModel):
-    """质量评分输入"""
+    """启发式文本统计输入；不执行独立机器门禁或语义审稿。"""
     model_config = ConfigDict(str_strip_whitespace=True)
     
     action: str = Field(..., description="操作: score/trend", pattern="^(score|trend)$")
-    chapter_file: str = Field(..., description="章节文件路径")
-    chapter: int = Field(..., description="章节号", ge=1)
+    chapter_file: Optional[str] = Field(default=None, description="score 必填：章节文件路径")
+    chapter: Optional[int] = Field(default=None, description="score 必填：章节号", ge=1)
     book_dir: str = Field(..., description="书籍工程目录路径")
 
 
@@ -699,7 +712,7 @@ def create_mcp_server():
     @mcp.tool(
         name="novel_quality_score",
         annotations={
-            "title": "质量评分",
+            "title": "文本统计观察",
             "readOnlyHint": True,
             "destructiveHint": False,
             "idempotentHint": True,
@@ -707,9 +720,15 @@ def create_mcp_server():
         }
     )
     async def novel_quality_score(params: QualityScoreInput) -> str:
-        """七维加权质量评分，包括AI腔、节奏、文风、情感、结构、对话、可读性。"""
+        """七维启发式文本统计；分数和等级不代表文学质量。
+
+        semantic_review 和 machine_gates 均为 not_run，需另行执行真实审核。
+        score 的 passed、退出码 0/1 及外层 success 仅表示达到/低于统计阈值 55；
+        trend 的退出码 0 仅表示成功读取统计报告，均不表示语义审稿通过。
+        情绪词和动作词命中须结合场景意图解释，不能据此要求安静场景改写。
+        """
         try:
-            args = [params.action, params.chapter_file, "--chapter", str(params.chapter), "--book-dir", params.book_dir]
+            args = _quality_score_args(params.action, params.book_dir, params.chapter_file, params.chapter)
             
             return json.dumps(_run_script("quality_score", args), indent=2)
         except Exception as e:

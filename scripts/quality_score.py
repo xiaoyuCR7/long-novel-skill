@@ -1,25 +1,23 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""quality_score.py — 章节质量多维评分系统 v1.0（纯标准库，无第三方依赖）。
+"""quality_score.py — 章节文本统计观察 v1.0（纯标准库，无第三方依赖）。
 
-从多个维度对章节正文进行量化评分，输出加权总分和维度雷达。
-评分结果可落盘到 追踪/质量评分/quality_ch{N}.json，供 novel_flow.py report 汇总趋势。
+从多个维度统计章节正文，输出兼容旧版的启发式加权分和维度雷达。
+结果可落盘到 追踪/质量评分/quality_ch{N}.json，供 trend 汇总统计趋势。
+本脚本不执行独立机器门禁或语义审稿，两者均明确记录为 not_run。
+total_score、grade、passed 仅解释统计规则，不能代表文学质量或审稿结论。
 
 七维评分体系（每维 0-100，加权求总分）：
-  1. AI腔控制   (权重 20%) — 复用 check_text.py 的 7 Gate 检测结果
-  2. 节奏控制   (权重 15%) — 复用 rhythm_guard.py 的配额/冷却检查
-  3. 文风一致性 (权重 15%) — 复用 style_fingerprint.py 的六维偏离度
-  4. 情感冲击力 (权重 15%) — 情绪密度/转折/爽点/虐点/甜度指标
-  5. 结构完整性 (权重 15%) — 承接→发展→结算→钩子四段式检查
-  6. 对话质量   (权重 10%) — 对话占比/标签密度/冲突递进/口语化
-  7. 可读性     (权重 10%) — 段落长度/句长分布/过渡密度/信息密度
+  1. 用词句式统计 (权重 20%) — 本地词表和句式匹配，不调用 check_text.py
+  2. 节奏统计     (权重 15%) — 长度/转换词/配额表近似，不调用 rhythm_guard.py
+  3. 文风指标偏离 (权重 15%) — 本地指标与可选文风锚的近似比较
+  4. 情绪词与动作词统计 (权重 15%) — 词表、标点命中，不判断情感效果
+  5. 结构标记统计 (权重 15%) — 四段位置的关键词匹配，不判断因果或闭合
+  6. 对话统计     (权重 10%) — 对话占比/标签密度/词表命中
+  7. 阅读形式统计 (权重 10%) — 段落长度/句长分布/过渡词密度
 
-评分等级：
-  85-100  A（优秀）
-  70-84   B（良好）
-  55-69   C（合格）
-  40-54   D（需修改）
-  0-39    F（不合格）
+统计分段（保留旧等级字母，不作为文学等级）：
+  85-100 A；70-84 B；55-69 C；40-54 D；0-39 F。
 
 子命令：
   score    评分单章，输出 JSON 报告 + 可选 Markdown 摘要
@@ -30,7 +28,9 @@
   python3 scripts/quality_score.py score "正文/第037章.md" --chapter 37 --book-dir "."
   python3 scripts/quality_score.py trend --book-dir "." --from 30 --to 40
 
-退出码：0 = 成功；1 = 评分低于阈值（默认 55）；2 = 参数/文件错误。
+score 退出码：0 = 达到统计阈值 55；1 = 低于统计阈值；2 = 参数/文件错误。
+trend 退出码：0 = 成功读取统计报告；2 = 参数/文件错误。均不表示审稿通过。
+为保持现有退出码兼容，--threshold 仍为保留参数，不改变固定阈值 55。
 """
 
 import argparse
@@ -49,25 +49,35 @@ VERSION = "1.0.0"
 # =========================================================
 
 DIMENSIONS = [
-    {"key": "ai_control", "name": "AI腔控制", "weight": 20},
-    {"key": "rhythm", "name": "节奏控制", "weight": 15},
-    {"key": "style_consistency", "name": "文风一致性", "weight": 15},
-    {"key": "emotional_impact", "name": "情感冲击力", "weight": 15},
-    {"key": "structure", "name": "结构完整性", "weight": 15},
-    {"key": "dialogue", "name": "对话质量", "weight": 10},
-    {"key": "readability", "name": "可读性", "weight": 10},
+    {"key": "ai_control", "name": "用词句式统计", "weight": 20},
+    {"key": "rhythm", "name": "节奏统计", "weight": 15},
+    {"key": "style_consistency", "name": "文风指标偏离", "weight": 15},
+    {"key": "emotional_impact", "name": "情绪词与动作词统计", "weight": 15},
+    {"key": "structure", "name": "结构标记统计", "weight": 15},
+    {"key": "dialogue", "name": "对话统计", "weight": 10},
+    {"key": "readability", "name": "阅读形式统计", "weight": 10},
 ]
 
 GRADE_THRESHOLDS = [
-    (85, "A", "优秀"),
-    (70, "B", "良好"),
-    (55, "C", "合格"),
-    (40, "D", "需修改"),
-    (0, "F", "不合格"),
+    (85, "A", "统计高分段"),
+    (70, "B", "统计中高分段"),
+    (55, "C", "统计中分段"),
+    (40, "D", "统计低分段"),
+    (0, "F", "统计极低分段"),
 ]
 
 DEFAULT_THRESHOLD = 55
 SCORE_DIR = "追踪/质量评分"
+SCORE_SCOPE = "heuristic_observation"
+SCORE_LIMITATIONS = (
+    "本报告仅含启发式文本统计；分数、等级和规则提示不代表文学质量，"
+    "不构成机器门禁或语义审稿结论。问题字段 issues 仅供定位复核，不能直接作为改稿依据。"
+)
+EMOTION_LIMITATIONS = (
+    "情绪词、动作词和标点命中不等于情绪效果，也不能判断人物选择与因果。"
+    "须结合题材和场景意图复核；安静、日常或含蓄场景的低词频不能据此要求改写，"
+    "增加词频也不能证明文学质量提高。"
+)
 
 
 # =========================================================
@@ -115,7 +125,30 @@ def get_grade(total: float) -> Tuple[str, str]:
     for threshold, grade, label in GRADE_THRESHOLDS:
         if total >= threshold:
             return grade, label
-    return "F", "不合格"
+    return "F", "统计极低分段"
+
+
+def observation_boundary() -> Dict[str, Any]:
+    """本工具没有执行其他审核；旧报告缺少状态时也不能从分数推断。"""
+    return {
+        "score_scope": SCORE_SCOPE,
+        "limitations": SCORE_LIMITATIONS,
+        "semantic_review": {
+            "status": "not_run", "judgment": None,
+            "reason": "本工具未执行语义复核；需结合原文证据、人物选择、因果和场景功能另行审阅。",
+        },
+        "machine_gates": {
+            "status": "not_run", "checks": [],
+            "reason": "本工具未执行独立机器门禁；局部词表和统计阈值不等同于门禁校验。",
+        },
+    }
+
+
+def statistical_issue(issue: str) -> str:
+    """旧 JSON 的情绪提示仅转为统计说明，不修改源文件。"""
+    return (issue.replace("情感冲击力", "情绪词与动作词统计")
+            .replace("情绪密度过低", "情绪词命中密度处于统计低值，需结合场景意图复核")
+            .replace("动作描写过少", "动作词表命中处于统计低值，不代表缺少有效动作描写"))
 
 
 # =========================================================
@@ -523,16 +556,17 @@ def parse_style_anchor(text: str) -> Optional[Dict[str, float]]:
 
 
 # =========================================================
-# 维度4：情感冲击力评分
+# 维度4：情绪词与动作词统计
 # =========================================================
 
 def score_emotional_impact(text: str) -> Dict[str, Any]:
-    """维度4：情感冲击力评分。"""
+    """维度4：情绪词与动作词统计；保留旧数值，不判断情感效果。"""
     non_ws, cjk = count_chars(text)
     paras = split_paragraphs(text)
 
     if cjk < 100:
-        return {"score": 0, "details": {"error": "文本过短"}, "issues": ["文本过短"]}
+        return {"score": 0, "details": {"error": "文本过短"}, "issues": ["文本过短"],
+                "score_scope": SCORE_SCOPE, "limitations": EMOTION_LIMITATIONS}
 
     # 1. 情绪词密度
     positive_words = ["兴奋", "激动", "开心", "喜悦", "振奋", "骄傲", "满足",
@@ -589,7 +623,7 @@ def score_emotional_impact(text: str) -> Dict[str, Any]:
         score += 5
     else:
         score -= 10
-        issues.append("情绪密度过低")
+        issues.append(f"情绪词命中密度: {emotion_density:.2f}/千字（统计低值，需结合场景意图复核）")
 
     # 情绪转折
     if emotion_transitions >= 2:
@@ -606,16 +640,16 @@ def score_emotional_impact(text: str) -> Dict[str, Any]:
         score += 5
     elif action_density < 0.5:
         score -= 5
-        issues.append("动作描写过少")
+        issues.append(f"动作词表命中密度: {action_density:.2f}/千字（统计低值，不代表缺少有效动作描写）")
 
     # 感叹号（适度加分，过多扣分）
     if 1 <= excl_density <= 3:
         score += 5
     elif excl_density > 5:
         score -= 5
-        issues.append("感叹号过密")
+        issues.append(f"感叹号密度: {excl_density:.2f}/千字（统计高值，需结合场景意图复核）")
 
-    # 身体反应（好的展示手法）
+    # 身体词表命中（仅保留旧计分规则，不判断展示效果）
     if body_count >= 3:
         score += 8
     elif body_count >= 1:
@@ -635,6 +669,8 @@ def score_emotional_impact(text: str) -> Dict[str, Any]:
             "excl_density": round(excl_density, 2),
             "body_reaction_count": body_count,
         },
+        "score_scope": SCORE_SCOPE,
+        "limitations": EMOTION_LIMITATIONS,
         "issues": issues,
     }
 
@@ -973,7 +1009,7 @@ def score_chapter(
     book_dir: Optional[Path] = None,
     file_path: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """对章节进行七维综合评分。"""
+    """汇总七维启发式观察；不执行独立机器门禁或语义审稿。"""
 
     dimensions_results = {
         "ai_control": score_ai_control(text),
@@ -984,6 +1020,8 @@ def score_chapter(
         "dialogue": score_dialogue(text),
         "readability": score_readability(text),
     }
+    for dim_result in dimensions_results.values():
+        dim_result["score_scope"] = SCORE_SCOPE
 
     # 加权总分
     total = 0.0
@@ -1031,19 +1069,31 @@ def score_chapter(
         "issues": all_issues,
         "issue_count": len(all_issues),
         "passed": total >= DEFAULT_THRESHOLD,
+        "passed_scope": "heuristic_threshold_only",
+        "heuristic_threshold": {"value": DEFAULT_THRESHOLD, "met": total >= DEFAULT_THRESHOLD},
+        **observation_boundary(),
     }
 
     return result
 
 
 def format_markdown_report(result: Dict[str, Any]) -> str:
-    """将评分结果格式化为 Markdown 报告。"""
+    """展示统计观察；旧 grade_label/passed 不作为文学结论。"""
+    dim_names = {dim["key"]: dim["name"] for dim in DIMENSIONS}
+    grade, grade_label = get_grade(result["total_score"])
+    threshold_met = result["total_score"] >= DEFAULT_THRESHOLD
     lines = []
-    lines.append(f"# 第{result['chapter']}章 质量评分报告")
+    lines.append(f"# 第{result['chapter']}章 质量评分报告（启发式统计观察）")
     lines.append("")
-    lines.append(f"**总分**: {result['total_score']} / 100  "
-                 f"**等级**: {result['grade']} ({result['grade_label']})  "
-                 f"**状态**: {'通过' if result['passed'] else '未通过'}")
+    lines.append(SCORE_LIMITATIONS)
+    lines.append(EMOTION_LIMITATIONS)
+    lines.append("")
+    lines.append(f"**统计总分**: {result['total_score']} / 100  "
+                 f"**统计分段**: {grade} ({grade_label})  "
+                 f"**统计阈值**: {'达到' if threshold_met else '低于'} {DEFAULT_THRESHOLD}")
+    lines.append("**语义复核**: 未运行（not_run）；无文学判断结果。")
+    lines.append("**机器门禁**: 未运行（not_run）；本工具没有执行独立门禁。")
+    lines.append("兼容字段 passed 与 score 退出码 0/1 仅表示达到/低于统计阈值。")
     lines.append(f"**字数**: {result['char_count']['total']} 字 "
                  f"(汉字 {result['char_count']['chinese']})")
     lines.append(f"**时间**: {result['timestamp']}")
@@ -1052,16 +1102,17 @@ def format_markdown_report(result: Dict[str, Any]) -> str:
     # 维度评分表
     lines.append("## 维度评分")
     lines.append("")
-    lines.append("| 维度 | 权重 | 得分 | 主要问题 |")
+    lines.append("| 统计维度 | 权重 | 得分 | 规则提示（待结合原文复核） |")
     lines.append("|------|------|------|----------|")
     for item in result["radar"]:
         dim_key = item["key"]
         dim_result = result["dimensions"][dim_key]
-        issues = dim_result.get("issues", [])
+        issues = [statistical_issue(issue) for issue in dim_result.get("issues", [])]
         issue_summary = "; ".join(issues[:2]) if issues else "—"
         if len(issues) > 2:
             issue_summary += f" 等{len(issues)}项"
-        lines.append(f"| {item['dimension']} | {item['weight']}% | "
+        name = dim_names.get(dim_key, item['dimension'])
+        lines.append(f"| {name} | {item['weight']}% | "
                      f"{item['score']} | {issue_summary} |")
     lines.append("")
 
@@ -1072,16 +1123,17 @@ def format_markdown_report(result: Dict[str, Any]) -> str:
     for item in result["radar"]:
         bar_len = int(item["score"] / 5)
         bar = "█" * bar_len + "░" * (20 - bar_len)
-        lines.append(f"{item['dimension']:<8} {bar} {item['score']}")
+        name = dim_names.get(item["key"], item["dimension"])
+        lines.append(f"{name:<8} {bar} {item['score']}")
     lines.append("```")
     lines.append("")
 
     # 问题清单
     if result["issues"]:
-        lines.append("## 问题清单")
+        lines.append("## 统计规则提示（兼容字段 issues）")
         lines.append("")
         for i, issue in enumerate(result["issues"], 1):
-            lines.append(f"{i}. {issue}")
+            lines.append(f"{i}. {statistical_issue(issue)}")
         lines.append("")
 
     # 详细数据
@@ -1090,7 +1142,8 @@ def format_markdown_report(result: Dict[str, Any]) -> str:
     for item in result["radar"]:
         dim_key = item["key"]
         dim_result = result["dimensions"][dim_key]
-        lines.append(f"### {item['dimension']} ({item['score']}分)")
+        name = dim_names.get(dim_key, item["dimension"])
+        lines.append(f"### {name} ({item['score']}分)")
         lines.append("")
         details = dim_result.get("details", {})
         for k, v in details.items():
@@ -1109,7 +1162,7 @@ def format_markdown_report(result: Dict[str, Any]) -> str:
 # =========================================================
 
 def analyze_trend(book_dir: Path, from_ch: int, to_ch: int) -> Dict[str, Any]:
-    """汇总多章评分趋势。"""
+    """汇总多章统计趋势；旧报告缺少审核状态时不从高分推断通过。"""
     score_dir = book_dir / SCORE_DIR
     if not score_dir.exists():
         return {"ok": False, "error": f"评分目录不存在: {score_dir}"}
@@ -1126,6 +1179,9 @@ def analyze_trend(book_dir: Path, from_ch: int, to_ch: int) -> Dict[str, Any]:
                     "grade": data.get("grade", "?"),
                     "dimensions": {k: v.get("score", 0) for k, v in data.get("dimensions", {}).items()},
                     "issue_count": data.get("issue_count", 0),
+                    "heuristic_threshold": {"value": DEFAULT_THRESHOLD,
+                                            "met": data.get("total_score", 0) >= DEFAULT_THRESHOLD},
+                    **observation_boundary(),
                 })
 
     if not chapters:
@@ -1179,6 +1235,7 @@ def analyze_trend(book_dir: Path, from_ch: int, to_ch: int) -> Dict[str, Any]:
         "trend": trend,
         "dim_trends": dim_trends,
         "chapters": chapters,
+        **observation_boundary(),
     }
 
 
@@ -1188,7 +1245,12 @@ def format_trend_markdown(trend: Dict[str, Any]) -> str:
         return f"趋势分析失败: {trend.get('error', '未知错误')}"
 
     lines = []
-    lines.append(f"# 质量趋势报告 ({trend['from_chapter']}-{trend['to_chapter']}章)")
+    lines.append(f"# 质量趋势报告（启发式统计观察） ({trend['from_chapter']}-{trend['to_chapter']}章)")
+    lines.append("")
+    lines.append(SCORE_LIMITATIONS)
+    lines.append(EMOTION_LIMITATIONS)
+    lines.append("**语义复核**: 未运行（not_run）；统计分数变化不代表文学质量变化。")
+    lines.append("**机器门禁**: 未运行（not_run）；历史报告中的高分或 passed 不作为门禁证据。")
     lines.append("")
     lines.append(f"**章节数**: {trend['chapter_count']}  "
                  f"**均分**: {trend['avg_score']}  "
@@ -1199,7 +1261,7 @@ def format_trend_markdown(trend: Dict[str, Any]) -> str:
     lines.append("")
 
     # 趋势图
-    lines.append("## 总分趋势")
+    lines.append("## 统计总分趋势（字母仅表示统计分段）")
     lines.append("```")
     for c in trend["chapters"]:
         bar_len = int(c["total"] / 5)
@@ -1285,22 +1347,24 @@ def main():
         except (AttributeError, OSError):
             pass
     parser = argparse.ArgumentParser(
-        description="章节质量多维评分系统 v1.0",
+        description="章节启发式统计观察 v1.0；不执行独立机器门禁或语义审稿。",
+        epilog="score: 0=达到统计阈值55，1=低于统计阈值，2=参数/文件错误；"
+               "trend: 0=读取成功，2=参数/文件错误。退出码均不代表文学验收。",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     subparsers = parser.add_subparsers(dest="command")
 
     # score
-    score_parser = subparsers.add_parser("score", help="评分单章")
+    score_parser = subparsers.add_parser("score", help="统计单章（不执行语义审稿）")
     score_parser.add_argument("file", help="章节文件路径")
     score_parser.add_argument("--chapter", type=int, required=True, help="章节号")
     score_parser.add_argument("--book-dir", help="书籍工程目录（用于加载文风锚/配额等）")
     score_parser.add_argument("--markdown", action="store_true", help="输出 Markdown 格式")
     score_parser.add_argument("--threshold", type=int, default=DEFAULT_THRESHOLD,
-                              help=f"通过阈值（默认 {DEFAULT_THRESHOLD}）")
+                              help=f"兼容保留参数，不改变现有固定统计阈值 {DEFAULT_THRESHOLD}")
 
     # trend
-    trend_parser = subparsers.add_parser("trend", help="多章评分趋势")
+    trend_parser = subparsers.add_parser("trend", help="多章启发式统计趋势（不推断文学质量）")
     trend_parser.add_argument("--book-dir", required=True, help="书籍工程目录")
     trend_parser.add_argument("--from", dest="from_ch", type=int, required=True, help="起始章号")
     trend_parser.add_argument("--to", dest="to_ch", type=int, required=True, help="结束章号")

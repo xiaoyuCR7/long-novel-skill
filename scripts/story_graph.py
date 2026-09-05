@@ -3,7 +3,7 @@
 
 职责：
 1. 从 entity_index.json + 章节摘要 构建节点（角色/事件/地点/物品/势力）
-2. 从正文章节摘要的「关键实体」字段 + 关系描述 提取边（关系）
+2. 从已登记实体和关系描述提取带来源的候选，必须语义复核，不能自动确认正史
 3. 改纲时级联标记受影响节点（cascade_pending）
 4. 导出 Mermaid 可视化（可选）
 5. 版本管理（每次更新写入时间戳，旧版保留备份）
@@ -13,6 +13,7 @@
 """
 
 import argparse
+import hashlib
 import json
 import re
 import sys
@@ -21,7 +22,8 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-from common import atomic_write_json, canonical_read_lock, extract_summary_fields
+from common import (atomic_write_json, canonical_read_lock, extract_summary_fields,
+                    find_chapter_file, load_char_names)
 
 
 # =========================================================
@@ -54,6 +56,30 @@ EDGE_TYPES = {
     "participates_in": "参与",
     "appears_in": "出现于",
 }
+
+# Only these edges describe document structure rather than a story assertion.
+STRUCTURAL_EDGE_TYPES = {"appears_in"}
+EXTRACTOR = "story_graph_candidates_v1"
+
+# Match text *between known entity mentions*. Do not guess new names or infer
+# ownership/alliance/rivalry from giving, accompanying, protecting or defeating.
+# (between, after target, relation, allowed source types, allowed target types)
+RELATION_PATTERNS = [
+    (r"杀(?:死|掉|害)?", "", "kills", {"character"}, {"character"}),
+    (r"背叛", "", "betrays", {"character", "faction"}, {"character", "faction"}),
+    (r"(?:与|和)", r"(?:结盟|联手|联合|合作)", "allies", {"character", "faction"}, {"character", "faction"}),
+    (r"爱(?:上|慕)?", "", "loves", {"character"}, {"character"}),
+    (r"仇恨", "", "hates", {"character", "faction"}, {"character", "faction"}),
+    (r"(?:拜|认)", r"(?:为师|做师傅)", "mentors", {"character"}, {"character"}),
+    (r"收", r"为徒", "mentors", {"character"}, {"character"}),
+    (r"(?:与|和)", r"(?:竞争|较量|比试|对战)", "rivals", {"character", "faction"}, {"character", "faction"}),
+    (r"揭露", "", "reveals", {"character", "faction"}, {"secret", "event"}),
+    (r"导致", "", "causes", {"event", "rule"}, {"event"}),
+    (r"(?:拥有|持有)", "", "owns", {"character", "faction"}, {"item"}),
+    (r"(?:前往|去往|赶到|奔赴|来到|抵达|进入|到达|(?:出现|现身)(?:在|于))",
+     "", "located_at", {"character"}, {"location"}),
+]
+_MODIFIERS = r"(?:(?:并没有|并未|没有|未曾|并非|从未|不曾|是否|可能|打算|准备|试图|已经|曾经|将要|不会|不能|不|没|未|已|曾|将|想|要|会|能)\s*)*"
 
 
 # =========================================================
@@ -98,6 +124,182 @@ def backup_graph(path: Path) -> Optional[Path]:
         return None
 
 
+def _text_hash(text: str) -> str:
+    """Hash decoded UTF-8 text, with Python's universal newline normalization."""
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def _known_mentions(text: str, names, start: int = 0, end: Optional[int] = None) -> list:
+    """Longest known names win; aliases must be registered as entities explicitly."""
+    names = sorted({n for n in names if n}, key=lambda n: (-len(n), n))
+    if not names:
+        return []
+    pattern = "|".join(re.escape(name) for name in names)
+    mentions = []
+    for match in re.compile(pattern).finditer(text, start, len(text) if end is None else end):
+        # English names inside words are not entity mentions. Chinese has no
+        # equivalent word boundary; candidate endpoints are checked separately.
+        start, end = match.span()
+        if match[0][0].isascii() and start and re.match(r"[A-Za-z0-9_]", text[start - 1]):
+            continue
+        if match[0][-1].isascii() and end < len(text) and re.match(r"[A-Za-z0-9_]", text[end]):
+            continue
+        mentions.append(match)
+    return mentions
+
+
+def _endpoint_boundary(text: str, start: int, end: int) -> bool:
+    """Conservatively reject unknown names extending a known Chinese name.
+
+    Common grammatical prefixes/suffixes are allowed; this is deliberately not
+    segmentation or a claim of full Chinese syntax/alias resolution.
+    """
+    if start and re.match(r"[\u3400-\u9fff]", text[start - 1]):
+        if not re.search(r"(?:如果|假如|要是|倘若|假设|一旦|除非|听说|据说|传闻|声称|谎称|认为|以为|原来|于是|然后|其实|但|若|是|让|由|说|问|的)$", text[:start]):
+            return False
+    if end < len(text) and re.match(r"[\u3400-\u9fff]", text[end]):
+        if not re.match(r"[的了后时并又却便就仍而也才在与和这那]", text[end:]):
+            return False
+    return True
+
+
+def _quote_ranges(text: str) -> list:
+    pairs = {"“": "”", "‘": "’", "「": "」", "『": "』", '"': '"'}
+    stack, ranges = [], []
+    for index, char in enumerate(text):
+        if stack and char == stack[-1][1]:
+            start, _ = stack.pop()
+            ranges.append((start, index + 1))
+        elif char in pairs:
+            stack.append((index, pairs[char]))
+    ranges.extend((start, len(text)) for start, _ in stack)
+    return ranges
+
+
+def _relation_candidates(text: str, nodes: list, chapter: int,
+                         source_path: str, source_kind: str,
+                         start: int = 0, end: Optional[int] = None,
+                         source_hash: Optional[str] = None) -> list:
+    """Return typed, unconfirmed candidates with exact source spans.
+
+    Spans are zero-based, end-exclusive offsets in the decoded source file.
+    The full sentence is kept for semantic review, including negation/quotes.
+    """
+    end = len(text) if end is None else end
+    node_map = {node["label"]: node for node in nodes}
+    mentions = _known_mentions(text, node_map, start, end)
+    quotes = [(a + start, b + start) for a, b in _quote_ranges(text[start:end])]
+    source_hash = source_hash or _text_hash(text)
+    candidates = []
+    for source, target in zip(mentions, mentions[1:]):
+        if source[0] == target[0]:
+            continue
+        gap = text[source.end():target.start()]
+        if len(gap) > 40 or re.search(r"[。！？!?\n，,；;：:]", gap):
+            continue
+        for between, after, edge_type, source_types, target_types in RELATION_PATTERNS:
+            if node_map[source[0]]["type"] not in source_types or node_map[target[0]]["type"] not in target_types:
+                continue
+            if not re.fullmatch(r"\s*" + _MODIFIERS + between + r"(?:了|过)?\s*", gap):
+                continue
+            suffix = re.match(r"\s*" + _MODIFIERS + after, text[target.end():end]) if after else None
+            if after and not suffix:
+                continue
+            match_end = target.end() + (suffix.end() if suffix else 0)
+            if not _endpoint_boundary(text, source.start(), match_end):
+                continue
+            # Bound review context by sentence, not by the relation match.
+            boundaries = list(re.finditer(r"[。！？!?\n]", text[start:source.start()]))
+            sentence_start = start + boundaries[-1].end() if boundaries else start
+            stop = re.search(r"[。！？!?\n]", text[match_end:end])
+            sentence_end = match_end + stop.end() if stop else end
+            context = text[sentence_start:sentence_end]
+            semantic_context = context
+            if source_kind == "summary":
+                semantic_context = re.sub(r"^\s*-\s*(?:\*\*)?[^：:\n*]+(?:\*\*)?\s*[：:]\s*", "", context)
+            flags = []
+            if re.search(r"[？?]|是否|难道|吗|么[。！!]?$", semantic_context):
+                flags.append("question")
+            if re.search(r"如果|假如|要是|倘若|假设|一旦|除非|可能|打算|准备|试图|将要|若|想|要|将|会", semantic_context):
+                flags.append("hypothetical")
+            if re.search(r"不|没|未|并非", semantic_context):
+                flags.append("negated")
+            if any(a < source.start() < b for a, b in quotes) or re.search(r"听说|据说|传闻|声称|谎称|认为|以为", semantic_context):
+                flags.append("quoted_claim")
+            candidates.append({
+                "source_label": source[0], "target_label": target[0],
+                "type": edge_type, "label": EDGE_TYPES[edge_type], "chapter": chapter,
+                "status": "unconfirmed", "semantic_review_required": True,
+                "assertion_kind": flags[0] if flags else "declarative",
+                "context_flags": flags,
+                "evidence": {"extractor": EXTRACTOR, "source_kind": source_kind,
+                             "source_path": source_path, "chapter": chapter,
+                             "source_hash": source_hash, "text": context,
+                             "span": [sentence_start, sentence_end],
+                             "match_span": [source.start(), match_end]},
+            })
+            break
+    return candidates
+
+
+def _graph_edges(candidates: list, nodes: list) -> list:
+    node_ids = {n["label"]: n["id"] for n in nodes}
+    edges = []
+    for candidate in candidates:
+        edge = dict(candidate)
+        edge["source"] = node_ids[edge.pop("source_label")]
+        edge["target"] = node_ids[edge.pop("target_label")]
+        edge["props"] = {}
+        edges.append(edge)
+    return edges
+
+
+def _edge_view(edge: dict, book_root: Path, source_cache: Optional[dict] = None) -> dict:
+    """Read legacy data without upgrading an assertion to canon or writing it."""
+    view = dict(edge)
+    if edge.get("type") in STRUCTURAL_EDGE_TYPES:
+        view.setdefault("status", "structural")
+        view.setdefault("semantic_review_required", False)
+        return view
+    view.setdefault("status", "legacy_unconfirmed")
+    view.setdefault("semantic_review_required", True)
+    evidence = edge.get("evidence") or {}
+    if evidence.get("source_path") and evidence.get("source_hash"):
+        cache = source_cache if source_cache is not None else {}
+        path = evidence["source_path"]
+        if path not in cache:
+            source = read_text(book_root / path)
+            cache[path] = _text_hash(source) if source is not None else None
+        view["evidence_status"] = "current" if cache[path] == evidence["source_hash"] else "stale"
+        if view["evidence_status"] == "stale":
+            view["status"] = "stale"
+            view["semantic_review_required"] = True
+    else:
+        view["evidence_status"] = "unavailable"
+    return view
+
+
+def _replace_source_edges(graph: dict, candidates: list, source_kind: str,
+                          chapter: int) -> Tuple[int, int]:
+    """Replace only our generated evidence for this source; retain legacy data.
+
+    Deduplication includes the evidence, so separate chapters/claims survive.
+    Unattributed legacy edges cannot safely be assigned to a source generator.
+    """
+    old = graph.get("edges", [])
+    replaced, kept = [], []
+    for edge in old:
+        evidence = edge.get("evidence") or {}
+        if (evidence.get("extractor") == EXTRACTOR and
+                evidence.get("source_kind") == source_kind and evidence.get("chapter") == chapter):
+            replaced.append(edge)
+        else:
+            kept.append(edge)
+    graph["edges"] = kept + candidates
+    return (sum(edge not in replaced for edge in candidates),
+            sum(edge not in candidates for edge in replaced))
+
+
 # =========================================================
 # 节点提取
 # =========================================================
@@ -137,8 +339,13 @@ def extract_entity_nodes(
     book_root: Path,
 ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
     """从 entity_index.json 和章节摘要提取非角色节点和边。"""
+    nodes = _entity_nodes(book_root)
+    return nodes, _extract_edges_from_summaries(book_root, nodes)
+
+
+def _entity_nodes(book_root: Path) -> list:
+    """Load the entity registry without extracting every summary's relations."""
     nodes = []
-    edges = []
 
     # 从 entity_index.json 提取实体
     entity_index = load_json(book_root / "追踪" / ENTITY_INDEX_FILE, {})
@@ -177,10 +384,7 @@ def extract_entity_nodes(
             "cascade_pending": False,
         })
 
-    # 从章节摘要提取关系边
-    edges = _extract_edges_from_summaries(book_root, nodes)
-
-    return nodes, edges
+    return nodes
 
 
 def _extract_from_summaries(
@@ -217,53 +421,20 @@ def _extract_edges_from_summaries(
     book_root: Path,
     nodes: List[Dict[str, Any]],
 ) -> List[Dict[str, Any]]:
-    """从章节摘要提取关系边。"""
-    edges = []
-    node_id_map = {n["label"]: n["id"] for n in nodes}
-
-    summary_path = book_root / "追踪" / CHAPTER_SUMMARY_FILE
-    text = read_text(summary_path)
+    """Extract review candidates with spans in the original summary file."""
+    text = read_text(book_root / "追踪" / CHAPTER_SUMMARY_FILE)
     if not text:
-        return edges
-
-    # 简单关系提取：从摘要中找「A→动词→B」模式
-    relation_patterns = [
-        (r"([^\s]{1,8})杀死([^\s]{1,8})", "kills"),
-        (r"([^\s]{1,8})背叛([^\s]{1,8})", "betrays"),
-        (r"([^\s]{1,8})与([^\s]{1,8})结盟", "allies"),
-        (r"([^\s]{1,8})与([^\s]{1,8})联手", "allies"),
-        (r"([^\s]{1,8})爱上([^\s]{1,8})", "loves"),
-        (r"([^\s]{1,8})仇恨([^\s]{1,8})", "hates"),
-        (r"([^\s]{1,8})拜([^\s]{1,8})为师", "mentors"),
-        (r"([^\s]{1,8})收([^\s]{1,8})为徒", "mentors"),
-        (r"([^\s]{1,8})与([^\s]{1,8})竞争", "rivals"),
-        (r"([^\s]{1,8})揭露([^\s]{1,8})", "reveals"),
-        (r"([^\s]{1,8})导致([^\s]{1,8})", "causes"),
-    ]
-
-    seen_edges = set()
-    for ch_num, block in _summary_chapter_blocks(text):
-        relation_text = re.sub(r"^\s*-\s*(?:\*\*)?[^：:\n*]+(?:\*\*)?\s*[：:]\s*", "", block, flags=re.M)
-
-        for pattern, edge_type in relation_patterns:
-            for m in re.finditer(pattern, relation_text):
-                a, b = m.group(1).strip("，。；;：: "), m.group(2).strip("，。；;：: ")
-                if a not in node_id_map or b not in node_id_map:
-                    continue
-                edge_key = (node_id_map[a], edge_type, node_id_map[b])
-                if edge_key in seen_edges:
-                    continue
-                seen_edges.add(edge_key)
-                edges.append({
-                    "source": node_id_map[a],
-                    "target": node_id_map[b],
-                    "type": edge_type,
-                    "label": EDGE_TYPES.get(edge_type, edge_type),
-                    "chapter": ch_num,
-                    "props": {},
-                })
-
-    return edges
+        return []
+    candidates = []
+    offset = 0
+    source_hash = _text_hash(text)
+    for chapter, block in _summary_chapter_blocks(text):
+        start = text.index(block, offset)
+        offset = start + len(block)
+        candidates.extend(_relation_candidates(
+            text, nodes, chapter, f"追踪/{CHAPTER_SUMMARY_FILE}",
+            "summary", start, offset, source_hash))
+    return _graph_edges(candidates, nodes)
 
 
 def _summary_chapter_blocks(text: str) -> List[Tuple[int, str]]:
@@ -288,123 +459,46 @@ def extract_from_chapter(
         return _extract_from_chapter_unlocked(book_root, chapter)
 
 
+def _extraction_nodes(book_root: Path) -> list:
+    """Use registered names only; do not discover aliases from relation text."""
+    graph = load_json(book_root / "追踪" / GRAPH_FILE, {}) or {}
+    nodes = {n["label"]: dict(n) for n in graph.get("nodes", [])}
+    for node in _entity_nodes(book_root) + extract_character_nodes(book_root):
+        nodes.setdefault(node["label"], node)
+    for name in load_char_names(book_root):
+        node = nodes.setdefault(name, {"id": f"char_{name}", "label": name, "type": "character"})
+        node["type"] = "character"
+    world = read_text(book_root / "设定" / "世界观.md") or ""
+    pattern = r"(?:地点|城市|区域|地域|国家)(?:\*\*)?\s*[：:]\s*([^\n，。；]+)"
+    for match in re.finditer(pattern, world):
+        name = match[1].strip()
+        if name:
+            nodes.setdefault(name, {"id": f"location_{name}", "label": name, "type": "location"})
+    return list(nodes.values())
+
+
 def _extract_from_chapter_unlocked(
     book_root: Path,
     chapter: int,
 ) -> Dict[str, Any]:
-    """从正文章节中自动提取实体和关系，不依赖章节摘要的「关键实体」字段。
-
-    返回 {"chapter", "characters_found", "locations_found", "new_edges", "text_length"}
-    """
-    # 查找章节文件
-    text_dir = book_root / "正文"
-    chapter_file = text_dir / f"第{chapter:03d}章_待写.md"
-    if not chapter_file.exists():
-        chapter_file = text_dir / f"第{chapter}章_待写.md"
-    if not chapter_file.exists():
-        # 尝试其他命名模式
-        for f in text_dir.glob(f"第{chapter:03d}章*.md"):
-            chapter_file = f
-            break
-        if not chapter_file.exists():
-            for f in text_dir.glob(f"第{chapter}章*.md"):
-                chapter_file = f
-                break
-
-    if not chapter_file.exists():
+    """Read prose and emit unconfirmed relation candidates, never canon."""
+    chapter_file = find_chapter_file(book_root, chapter)
+    if chapter_file is None:
         return {"chapter": chapter, "error": "章节文件不存在", "characters_found": [],
                 "locations_found": [], "new_edges": [], "text_length": 0}
-
     text = chapter_file.read_text(encoding="utf-8")
-    text_len = len(re.sub(r"\s", "", text))
-
-    # ① 加载已知角色名（从设定/角色/*.md 文件名）
-    char_dir = book_root / "设定" / "角色"
-    known_chars = []
-    if char_dir.exists():
-        for f in char_dir.glob("*.md"):
-            known_chars.append(f.stem)
-
-    # 在正文中查找角色名
-    chars_found = []
-    for name in known_chars:
-        if name in text:
-            chars_found.append(name)
-
-    # ② 加载已知地名（从设定/世界观.md）
-    loc_file = book_root / "设定" / "世界观.md"
-    known_locs = []
-    if loc_file.exists():
-        loc_text = loc_file.read_text(encoding="utf-8")
-        # 匹配 「地点：」「城市：」「区域：」后的内容
-        for pat in [r"(?:地点|城市|区域|地域|宗门|势力|国家)[：:]\s*([^\n，。；]+)",
-                    r"\*\*(地点|城市|区域|地域|宗门|势力|国家)\*\*\s*[：:]\s*([^\n，。；]+)",
-                    r"-?\s*(?:地点|城市|区域|地域|宗门|势力|国家)\s+([^\n，。；]{2,20})"]:
-            for m in re.finditer(pat, loc_text):
-                loc = m.group(1) if m.lastindex == 1 else m.group(1 if m.lastindex == 1 else len(m.groups()))
-                if loc and len(loc) >= 2:
-                    known_locs.append(loc.strip())
-
-    # 去重
-    known_locs = list(dict.fromkeys(known_locs))
-
-    # 在正文中查找地名
-    locs_found = []
-    for loc in known_locs:
-        if loc in text:
-            locs_found.append(loc)
-
-    # ③ 提取关系边（扩展关系模式）
-    all_nodes = chars_found + locs_found
-    new_edges = []
-    seen = set()
-
-    relation_patterns = [
-        (r"([一-鿿㐀-䶿豈-﫿]{2,8})杀(?:死|掉|害)?([一-鿿㐀-䶿豈-﫿]{2,8})", "kills"),
-        (r"([一-鿿㐀-䶿豈-﫿]{2,8})背叛([一-鿿㐀-䶿豈-﫿]{2,8})", "betrays"),
-        (r"([一-鿿㐀-䶿豈-﫿]{2,8})(?:与|和)([一-鿿㐀-䶿豈-﫿]{2,8})(?:结盟|联手|联合|合作)", "allies"),
-        (r"([一-鿿㐀-䶿豈-﫿]{2,8})爱(?:上|慕)?([一-鿿㐀-䶿豈-﫿]{2,8})", "loves"),
-        (r"([一-鿿㐀-䶿豈-﫿]{2,8})仇恨([一-鿿㐀-䶿豈-﫿]{2,8})", "hates"),
-        (r"([一-鿿㐀-䶿豈-﫿]{2,8})(?:拜|认)([一-鿿㐀-䶿豈-﫿]{2,8})(?:为师|做师傅)", "mentors"),
-        (r"([一-鿿㐀-䶿豈-﫿]{2,8})(?:与|和)([一-鿿㐀-䶿豈-﫿]{2,8})(?:竞争|较量|比试|对战|战斗|对战)", "rivals"),
-        (r"([一-鿿㐀-䶿豈-﫿]{2,8})揭露([一-鿿㐀-䶿豈-﫿]{2,8})", "reveals"),
-        (r"([一-鿿㐀-䶿豈-﫿]{2,8})导致([一-鿿㐀-䶿豈-﫿]{2,8})", "causes"),
-        # v1.1 新增模式
-        (r"([一-鿿㐀-䶿豈-﫿]{2,8})(?:给|交给|送给|递)(?:给)?([一-鿿㐀-䶿豈-﫿]{2,8})", "owns"),
-        (r"([一-鿿㐀-䶿豈-﫿]{2,8})(?:带|带着|携|携同)([一-鿿㐀-䶿豈-﫿]{2,8})", "owns"),
-        (r"([一-鿿㐀-䶿豈-﫿]{2,8})(?:找|找到|寻得|寻获)([一-鿿㐀-䶿豈-﫿]{2,8})", "owns"),
-        (r"([一-鿿㐀-䶿豈-﫿]{2,8})(?:打败|击败|战胜|击垮|击溃)([一-鿿㐀-䶿豈-﫿]{2,8})", "rivals"),
-        (r"([一-鿿㐀-䶿豈-﫿]{2,8})(?:保护|守护|护|庇)(?:护)?([一-鿿㐀-䶿豈-﫿]{2,8})", "allies"),
-        (r"([一-鿿㐀-䶿豈-﫿]{2,8})(?:前往|去往|赶到|奔赴|来到|抵达|进入)([一-鿿㐀-䶿豈-﫿]{2,8})", "located_at"),
-        (r"([一-鿿㐀-䶿豈-﫿]{2,8})(?:出现|现身|来到|抵达|到达)(?:在|于|至)?([一-鿿㐀-䶿豈-﫿]{2,8})", "located_at"),
-    ]
-
-    for pattern, edge_type in relation_patterns:
-        for m in re.finditer(pattern, text):
-            a, b = m.group(1).strip(), m.group(2).strip()
-            if a == b:
-                continue
-            if a not in all_nodes and b not in all_nodes:
-                continue
-            key = (a, edge_type, b)
-            if key in seen:
-                continue
-            seen.add(key)
-            new_edges.append({
-                "source_label": a,
-                "target_label": b,
-                "type": edge_type,
-                "label": EDGE_TYPES.get(edge_type, edge_type),
-                "chapter": chapter,
-            })
-
+    nodes = _extraction_nodes(book_root)
+    mentions = {m[0] for m in _known_mentions(text, [n["label"] for n in nodes])}
+    found = [n for n in nodes if n["label"] in mentions]
+    source_path = chapter_file.relative_to(book_root).as_posix()
     return {
-        "chapter": chapter,
-        "file": str(chapter_file.name),
-        "characters_found": chars_found,
-        "locations_found": locs_found,
-        "new_edges": new_edges,
-        "text_length": text_len,
+        "chapter": chapter, "file": chapter_file.name,
+        "characters_found": sorted(n["label"] for n in found if n["type"] == "character"),
+        "locations_found": sorted(n["label"] for n in found if n["type"] == "location"),
+        "new_edges": _relation_candidates(text, nodes, chapter, source_path, "prose"),
+        "text_length": len(re.sub(r"\s", "", text)),
+        "source_hash": _text_hash(text), "source_path": source_path,
+        "semantic_review_required": True,
     }
 
 
@@ -412,98 +506,59 @@ def extract_and_update(
     book_root: Path,
     chapter: int,
 ) -> Dict[str, Any]:
-    """从章节正文提取实体和关系，并合并到知识图谱。"""
-    extracted = extract_from_chapter(book_root, chapter)
-    if "error" in extracted:
-        return {"ok": False, "error": extracted["error"], "chapter": chapter}
+    """Replace this chapter's generated candidates while holding the canon lock."""
+    with canonical_read_lock(book_root):
+        extracted = _extract_from_chapter_unlocked(book_root, chapter)
+        if "error" in extracted:
+            return {"ok": False, "error": extracted["error"], "chapter": chapter}
+        graph_path = book_root / "追踪" / GRAPH_FILE
+        graph = load_json(graph_path)
+        if not graph:
+            return {"ok": False, "error": "图谱不存在，请先 build", "chapter": chapter}
+        nodes = {n["label"]: n for n in graph.get("nodes", [])}
+        needed = set(extracted["characters_found"] + extracted["locations_found"])
+        for edge in extracted["new_edges"]:
+            needed.update((edge["source_label"], edge["target_label"]))
+        added_nodes = 0
+        for node in _extraction_nodes(book_root):
+            label = node["label"]
+            if label not in needed:
+                continue
+            if label not in nodes:
+                nodes[label] = {**node, "props": node.get("props", {}),
+                                "first_appear_chapter": chapter,
+                                "last_updated_chapter": chapter, "cascade_pending": False}
+                added_nodes += 1
+            else:
+                current = nodes[label]
+                current["first_appear_chapter"] = min(current.get("first_appear_chapter") or chapter, chapter)
+                current["last_updated_chapter"] = max(current.get("last_updated_chapter") or chapter, chapter)
+        new_edges = _graph_edges(extracted["new_edges"], list(nodes.values()))
+        added_edges, removed_edges = _replace_source_edges(graph, new_edges, "prose", chapter)
+        _store_nodes(graph, nodes)
+        _refresh_stats(graph)
+        save_json(graph_path, graph)
+        return {"ok": True, "chapter": chapter, "added_nodes": added_nodes,
+                "added_edges": added_edges, "removed_edges": removed_edges,
+                "total_nodes": len(graph["nodes"]), "total_edges": len(graph["edges"]),
+                "semantic_review_required": True, "saved_to": str(graph_path)}
 
-    graph_path = book_root / "追踪" / GRAPH_FILE
-    graph = load_json(graph_path)
-    if not graph:
-        return {"ok": False, "error": "图谱不存在，请先 build", "chapter": chapter}
 
-    # 合并新节点
-    added_nodes = 0
-    existing_nodes = {n["label"]: n for n in graph.get("nodes", [])}
-
-    for char_name in extracted["characters_found"]:
-        node_id = f"char_{char_name}"
-        if node_id not in existing_nodes:
-            existing_nodes[node_id] = {
-                "id": node_id,
-                "type": "character",
-                "label": char_name,
-                "props": {},
-                "first_appear_chapter": chapter,
-                "last_updated_chapter": chapter,
-                "cascade_pending": False,
-            }
-            added_nodes += 1
-
-    for loc_name in extracted["locations_found"]:
-        node_id = f"location_{loc_name}"
-        if node_id not in existing_nodes:
-            existing_nodes[node_id] = {
-                "id": node_id,
-                "type": "location",
-                "label": loc_name,
-                "props": {},
-                "first_appear_chapter": chapter,
-                "last_updated_chapter": chapter,
-                "cascade_pending": False,
-            }
-            added_nodes += 1
-
-    # 合并新边
-    added_edges = 0
-    seen_edges = {(e["source"], e["type"], e["target"]) for e in graph.get("edges", [])}
-    for edge in extracted["new_edges"]:
-        src_label = edge["source_label"]
-        tgt_label = edge["target_label"]
-        # 查找或创建节点 ID
-        src_node = existing_nodes.get(f"char_{src_label}") or existing_nodes.get(f"location_{src_label}")
-        tgt_node = existing_nodes.get(f"char_{tgt_label}") or existing_nodes.get(f"location_{tgt_label}")
-        if not src_node or not tgt_node:
-            continue
-        src_id = src_node["id"]
-        tgt_id = tgt_node["id"]
-        edge_key = (src_id, edge["type"], tgt_id)
-        if edge_key in seen_edges:
-            continue
-        seen_edges.add(edge_key)
-        graph["edges"].append({
-            "source": src_id,
-            "target": tgt_id,
-            "type": edge["type"],
-            "label": edge["label"],
-            "chapter": chapter,
-            "props": {},
-        })
-        added_edges += 1
-
-    # 更新统计
-    graph["nodes"] = list(existing_nodes.values())
+def _refresh_stats(graph: dict) -> None:
     graph["updated_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
     type_counts = defaultdict(int)
-    for n in graph["nodes"]:
-        type_counts[n["type"]] += 1
-    graph["stats"] = {
-        "total_nodes": len(graph["nodes"]),
-        "total_edges": len(graph["edges"]),
-        "node_types": dict(type_counts),
-    }
+    for node in graph["nodes"]:
+        type_counts[node["type"]] += 1
+    graph["stats"] = {"total_nodes": len(graph["nodes"]), "total_edges": len(graph["edges"]),
+                      "node_types": dict(type_counts)}
 
-    save_json(graph_path, graph)
 
-    return {
-        "ok": True,
-        "chapter": chapter,
-        "added_nodes": added_nodes,
-        "added_edges": added_edges,
-        "total_nodes": len(graph["nodes"]),
-        "total_edges": len(graph["edges"]),
-        "saved_to": str(graph_path),
-    }
+def _store_nodes(graph: dict, nodes_by_label: dict) -> None:
+    # Old graphs may already contain two IDs for one label. Keep those IDs so
+    # legacy edges remain resolvable; updates reuse an ID and add no duplicates.
+    by_id = {n["id"]: n for n in graph.get("nodes", [])}
+    by_id.update({n["id"]: n for n in nodes_by_label.values()})
+    graph["nodes"] = list(by_id.values())
 
 
 # =========================================================
@@ -595,7 +650,7 @@ def _update_chapter_unlocked(
     book_root: Path,
     chapter: int,
 ) -> Dict[str, Any]:
-    """增量更新：只从单章摘要提取新实体和关系，追加到已有图谱。
+    """增量更新：从单章摘要提取实体，替换该章生成的关系候选。
 
     每章写完后调用，避免全量 rebuild 的代价。
     """
@@ -640,109 +695,33 @@ def _update_chapter_unlocked(
         if chapter not in new_entities[ename]["chapters"]:
             new_entities[ename]["chapters"].append(chapter)
 
-    # 提取关系边
-    new_edges = []
-    node_id_map = {n["label"]: n["id"] for n in graph.get("nodes", [])}
-    # 也包含本章新发现的实体
-    for ename, info in new_entities.items():
-        etype = info["type"]
-        node_id_map[ename] = f"{etype}_{ename}"
-
-    relation_patterns = [
-        (r"([^\s]{1,8})杀死([^\s]{1,8})", "kills"),
-        (r"([^\s]{1,8})背叛([^\s]{1,8})", "betrays"),
-        (r"([^\s]{1,8})与([^\s]{1,8})结盟", "allies"),
-        (r"([^\s]{1,8})与([^\s]{1,8})联手", "allies"),
-        (r"([^\s]{1,8})爱上([^\s]{1,8})", "loves"),
-        (r"([^\s]{1,8})仇恨([^\s]{1,8})", "hates"),
-        (r"([^\s]{1,8})拜([^\s]{1,8})为师", "mentors"),
-        (r"([^\s]{1,8})收([^\s]{1,8})为徒", "mentors"),
-        (r"([^\s]{1,8})与([^\s]{1,8})竞争", "rivals"),
-        (r"([^\s]{1,8})揭露([^\s]{1,8})", "reveals"),
-        (r"([^\s]{1,8})导致([^\s]{1,8})", "causes"),
-    ]
-
-    seen_edges = set()
-    # 先加入已有边到 seen
-    for edge in graph.get("edges", []):
-        key = (edge["source"], edge["type"], edge["target"])
-        seen_edges.add(key)
-
-    for pattern, edge_type in relation_patterns:
-        for m in re.finditer(pattern, chapter_block):
-            a, b = m.group(1).strip(), m.group(2).strip()
-            if a not in node_id_map or b not in node_id_map:
-                continue
-            edge_key = (node_id_map[a], edge_type, node_id_map[b])
-            if edge_key in seen_edges:
-                continue
-            seen_edges.add(edge_key)
-            new_edges.append({
-                "source": node_id_map[a],
-                "target": node_id_map[b],
-                "type": edge_type,
-                "label": EDGE_TYPES.get(edge_type, edge_type),
-                "chapter": chapter,
-                "props": {},
-            })
-
-    # 合并新节点到图谱
-    added_nodes = 0
-    updated_nodes = 0
-    existing_nodes = {n["id"]: n for n in graph.get("nodes", [])}
-
-    for ename, info in new_entities.items():
-        etype = info["type"]
-        node_id = f"{etype}_{ename}"
-        if node_id in existing_nodes:
-            # 更新 last_updated_chapter
-            n = existing_nodes[node_id]
-            last_ch = n.get("last_updated_chapter")
-            if last_ch is None or chapter > last_ch:
-                n["last_updated_chapter"] = chapter
+    nodes = {n["label"]: n for n in graph.get("nodes", [])}
+    added_nodes = updated_nodes = 0
+    for name, info in new_entities.items():
+        if name in nodes:
+            node = nodes[name]
+            node["first_appear_chapter"] = min(node.get("first_appear_chapter") or chapter, chapter)
+            node["last_updated_chapter"] = max(node.get("last_updated_chapter") or chapter, chapter)
             updated_nodes += 1
         else:
-            existing_nodes[node_id] = {
-                "id": node_id,
-                "type": etype,
-                "label": ename,
-                "props": {},
-                "first_appear_chapter": chapter,
-                "last_updated_chapter": chapter,
-                "cascade_pending": False,
-            }
+            nodes[name] = {"id": f"{info['type']}_{name}", "type": info["type"], "label": name,
+                           "props": {}, "first_appear_chapter": chapter,
+                           "last_updated_chapter": chapter, "cascade_pending": False}
             added_nodes += 1
-
-    # 合并新边
-    added_edges = 0
-    for edge in new_edges:
-        graph["edges"].append(edge)
-        added_edges += 1
-
-    # 更新统计
-    graph["nodes"] = list(existing_nodes.values())
-    graph["updated_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
-    type_counts = defaultdict(int)
-    for n in graph["nodes"]:
-        type_counts[n["type"]] += 1
-    graph["stats"] = {
-        "total_nodes": len(graph["nodes"]),
-        "total_edges": len(graph["edges"]),
-        "node_types": dict(type_counts),
-    }
-
+    start = text.index(chapter_block)
+    candidates = _relation_candidates(text, list(nodes.values()), chapter,
+                                     f"追踪/{CHAPTER_SUMMARY_FILE}", "summary",
+                                     start, start + len(chapter_block))
+    new_edges = _graph_edges(candidates, list(nodes.values()))
+    added_edges, removed_edges = _replace_source_edges(graph, new_edges, "summary", chapter)
+    _store_nodes(graph, nodes)
+    _refresh_stats(graph)
     save_json(graph_path, graph)
-
-    return {
-        "ok": True,
-        "chapter": chapter,
-        "added_nodes": added_nodes,
-        "updated_nodes": updated_nodes,
-        "added_edges": added_edges,
-        "total_nodes": len(graph["nodes"]),
-        "total_edges": len(graph["edges"]),
-        "saved_to": str(graph_path),
-    }
+    return {"ok": True, "chapter": chapter, "added_nodes": added_nodes,
+            "updated_nodes": updated_nodes, "added_edges": added_edges,
+            "removed_edges": removed_edges, "semantic_review_required": True,
+            "total_nodes": len(graph["nodes"]), "total_edges": len(graph["edges"]),
+            "saved_to": str(graph_path)}
 
 
 # =========================================================
@@ -839,6 +818,8 @@ def query_graph(
     # 查找邻接边
     result_nodes = []
     result_edges = []
+    source_cache = {}
+    seen_edges = set()
     visited = set()
 
     for m in matched:
@@ -850,12 +831,13 @@ def query_graph(
 
     while current_depth < depth:
         next_frontier = set()
-        for edge in graph.get("edges", []):
+        for edge_index, edge in enumerate(graph.get("edges", [])):
             src = edge["source"]
             tgt = edge["target"]
             if src in frontier or tgt in frontier:
-                if edge not in result_edges:
-                    result_edges.append(edge)
+                if edge_index not in seen_edges:
+                    seen_edges.add(edge_index)
+                    result_edges.append(_edge_view(edge, book_root, source_cache))
                 if src not in visited:
                     next_frontier.add(src)
                 if tgt not in visited:
@@ -868,7 +850,7 @@ def query_graph(
                 result_nodes.append(node_map[nid])
                 visited.add(nid)
 
-        frontier = next_frontier - visited
+        frontier = next_frontier
         current_depth += 1
 
     return {
@@ -879,6 +861,7 @@ def query_graph(
         "nodes": result_nodes,
         "edges": result_edges,
         "total_related": len(result_nodes),
+        "semantic_review_required": any(e.get("semantic_review_required") for e in result_edges),
     }
 
 
@@ -924,15 +907,24 @@ def export_mermaid(book_root: Path, output_path: Optional[Path] = None) -> str:
 
     lines.append("")
 
-    # 边定义
+    # Relation labels and uncertainty are visible even for legacy graphs.
+    source_cache = {}
+    status_labels = {"unconfirmed": "未确认·需语义复核", "legacy_unconfirmed": "旧图谱·未确认",
+                     "stale": "来源已变更·需重新提取"}
     for edge in graph.get("edges", []):
         src = node_ids.get(edge["source"])
         tgt = node_ids.get(edge["target"])
         if src and tgt:
-            label = edge["label"]
-            ch = edge.get("chapter", "")
-            ch_str = f"|Ch{ch}|" if ch else ""
-            lines.append(f"  {src} -->{ch_str} {tgt}")
+            view = _edge_view(edge, book_root, source_cache)
+            parts = [edge.get("label", edge.get("type", ""))]
+            if edge.get("chapter"):
+                parts.append(f"Ch{edge['chapter']}")
+            if view.get("status") in status_labels:
+                parts.append(status_labels[view["status"]])
+            if edge.get("assertion_kind"):
+                parts.append(edge["assertion_kind"])
+            label = " · ".join(parts).replace('"', "#quot;").replace("|", "#124;")
+            lines.append(f'  {src} -->|"{label}"| {tgt}')
 
     mermaid_text = "\n".join(lines)
 
@@ -952,62 +944,103 @@ def export_mermaid(book_root: Path, output_path: Optional[Path] = None) -> str:
 
 def impact_analysis(
     book_root: Path,
-    node_label: str,
+    node_label: Optional[str] = None,
+    chapter: Optional[int] = None,
 ) -> Dict[str, Any]:
-    """分析修改某个节点可能影响的级联范围。
+    """Read-only review scope, not a proof that downstream prose must change.
 
-    返回：直接受影响节点 + 间接受影响节点 + 影响路径。
+    Definite = selected entity/current source mentions and the supplied source
+    chapter. Possible = up to two graph hops and entity-index chapter references,
+    including legacy, stale or unconfirmed evidence. Never edit prose or graph.
     """
-    query_result = query_graph(book_root, node_label, depth=2)
-    if not query_result.get("ok"):
-        return query_result
-
-    matched = query_result.get("matched", [])
-    if not matched:
-        return query_result
-
-    # 分析影响路径
-    direct_impact = []
-    indirect_impact = []
-    node_ids = {n["id"] for n in query_result["nodes"]}
-    matched_ids = {m["id"] for m in matched}
-
-    for edge in query_result.get("edges", []):
-        if edge["source"] in matched_ids and edge["target"] in node_ids:
-            direct_impact.append({
-                "from": edge["source"],
-                "to": edge["target"],
-                "relation": edge["label"],
-                "chapter": edge.get("chapter"),
-            })
-        elif edge["target"] in matched_ids and edge["source"] in node_ids:
-            direct_impact.append({
-                "from": edge["source"],
-                "to": edge["target"],
-                "relation": edge["label"],
-                "chapter": edge.get("chapter"),
-            })
-
-    # 间接影响 = 非直接但有边连接
-    direct_pairs = {(d["from"], d["to"]) for d in direct_impact}
-    for edge in query_result.get("edges", []):
-        if (edge["source"], edge["target"]) not in direct_pairs:
-            if edge["source"] in node_ids and edge["target"] in node_ids:
-                indirect_impact.append({
-                    "from": edge["source"],
-                    "to": edge["target"],
-                    "relation": edge["label"],
-                    "chapter": edge.get("chapter"),
-                })
-
-    return {
-        "ok": True,
-        "node": node_label,
-        "matched": matched,
-        "direct_impact": direct_impact,
-        "indirect_impact": indirect_impact,
-        "total_impact": len(direct_impact) + len(indirect_impact),
-    }
+    graph = load_json(book_root / "追踪" / GRAPH_FILE, {}) or {}
+    if not graph and chapter is None:
+        return {"ok": False, "error": "图谱不存在，请先 build"}
+    if node_label is None and chapter is None:
+        return {"ok": False, "error": "请提供节点标签或 --chapter"}
+    nodes = {n["id"]: n for n in graph.get("nodes", [])}
+    matched = [n for n in nodes.values() if node_label and node_label.lower() in n["label"].lower()]
+    definite = {n["label"] for n in matched}
+    seed_ids = {n["id"] for n in matched}
+    possible = set()
+    possible_chapters = set()
+    references = []
+    source_info = None
+    if chapter is not None:
+        chapter_file = find_chapter_file(book_root, chapter)
+        if chapter_file is None:
+            return {"ok": False, "error": "章节文件不存在", "chapter": chapter, "read_only": True}
+        text = chapter_file.read_text(encoding="utf-8")
+        known = _extraction_nodes(book_root)
+        mentions = _known_mentions(text, [n["label"] for n in known])
+        if node_label:
+            mentions = [m for m in mentions if node_label.lower() in m[0].lower()]
+        definite = {m[0] for m in mentions}
+        source_info = {"chapter": chapter, "source_path": chapter_file.relative_to(book_root).as_posix(),
+                       "source_hash": _text_hash(text)}
+        for mention in mentions:
+            references.append({"kind": "source_mention", "entity": mention[0],
+                               "span": list(mention.span()), **source_info})
+        seed_ids.update(nid for nid, node in nodes.items() if node["label"] in definite)
+        # Removed/renamed mentions can remain in old graph evidence. Include them
+        # as possible review targets, never as current source facts.
+        for edge in graph.get("edges", []):
+            evidence = edge.get("evidence") or {}
+            if evidence.get("chapter", edge.get("chapter")) == chapter:
+                if not node_label or edge["source"] in seed_ids or edge["target"] in seed_ids:
+                    seed_ids.update((edge["source"], edge["target"]))
+    direct, indirect = [], []
+    seen_ids = set(seed_ids)
+    frontier = set(seed_ids)
+    seen_edges = set()
+    source_cache = {}
+    for depth in range(2):
+        next_frontier = set()
+        for index, edge in enumerate(graph.get("edges", [])):
+            if edge["source"] not in frontier and edge["target"] not in frontier:
+                continue
+            next_frontier.update((edge["source"], edge["target"]))
+            if index in seen_edges:
+                continue
+            seen_edges.add(index)
+            view = _edge_view(edge, book_root, source_cache)
+            item = {"from": edge["source"], "to": edge["target"],
+                    "relation": edge.get("label", edge.get("type")), "chapter": edge.get("chapter"),
+                    "status": view["status"], "semantic_review_required": view["semantic_review_required"]}
+            (direct if depth == 0 else indirect).append(item)
+            references.append({"kind": "graph_edge", **item,
+                               "evidence": edge.get("evidence"), "evidence_status": view.get("evidence_status")})
+            if isinstance(edge.get("chapter"), int):
+                possible_chapters.add(edge["chapter"])
+        frontier = next_frontier - seen_ids
+        seen_ids.update(next_frontier)
+    possible.update(nodes[nid]["label"] for nid in seen_ids if nid in nodes)
+    labels = definite | possible
+    index = load_json(book_root / "追踪" / ENTITY_INDEX_FILE, {}) or {}
+    entities = index.get("entities", index) if isinstance(index, dict) else {}
+    for label, info in entities.items():
+        # Flat indexes may keep the type prefix from the summary template.
+        name = label.split(":", 1)[-1].strip()
+        if name not in labels:
+            continue
+        chapters = info.get("chapters", []) if isinstance(info, dict) else info
+        if not isinstance(chapters, list):
+            continue
+        chapters = [number for number in chapters if isinstance(number, int)]
+        possible_chapters.update(chapters)
+        references.append({"kind": "entity_index", "entity": name, "chapters": chapters,
+                           "source_path": f"追踪/{ENTITY_INDEX_FILE}", "status": "unverified_reference"})
+    definite_chapters = {chapter} if chapter is not None else set()
+    return {"ok": True, "node": node_label, "chapter": chapter,
+            "matched": [{"id": n["id"], "label": n["label"], "type": n["type"]} for n in matched],
+            "direct_impact": direct, "indirect_impact": indirect,
+            "total_impact": len(direct) + len(indirect),
+            "definite_entities": sorted(definite), "possible_entities": sorted(possible - definite),
+            "definite_chapters": sorted(definite_chapters),
+            "possible_chapters": sorted(possible_chapters - definite_chapters),
+            "source": source_info, "references": references,
+            "read_only": True, "semantic_review_required": True,
+            "scope_note": "确定项仅表示修改源或当前原文点名；可能项来自两跳图谱及未核验索引，需逐章复核，不代表必须改文。"}
 
 
 # =========================================================
@@ -1031,6 +1064,7 @@ def main():
   python scripts/story_graph.py query "{书名目录}" 林雷 --depth 2
   python scripts/story_graph.py cascade "{书名目录}" --from-chapter 50 --desc "改主线"
   python scripts/story_graph.py impact "{书名目录}" 林雷
+  python scripts/story_graph.py impact "{书名目录}" --chapter 37
   python scripts/story_graph.py export "{书名目录}" --output graph.md
   python scripts/story_graph.py status "{书名目录}"
   python scripts/story_graph.py update "{书名目录}" --chapter 37
@@ -1052,9 +1086,10 @@ def main():
     p_cascade.add_argument("--from-chapter", type=int, required=True, help="改纲影响起始章节")
     p_cascade.add_argument("--desc", default="", help="改纲说明")
 
-    p_impact = sub.add_parser("impact", help="分析修改某节点的级联影响")
+    p_impact = sub.add_parser("impact", help="只读列出修改源及可能需要复核的关联实体/章节")
     p_impact.add_argument("book_root", help="书籍工程根目录")
-    p_impact.add_argument("node", help="节点标签")
+    p_impact.add_argument("node", nargs="?", help="节点标签（可选）")
+    p_impact.add_argument("--chapter", type=int, help="修改源章号；只读列出确定/可能复核范围")
 
     p_export = sub.add_parser("export", help="导出 Mermaid 可视化")
     p_export.add_argument("book_root", help="书籍工程根目录")
@@ -1068,7 +1103,7 @@ def main():
     p_update.add_argument("--chapter", type=int, required=True, help="章节号")
 
     # v1.1 新增 extract 子命令
-    p_extract = sub.add_parser("extract", help="从正文章节自动提取实体和关系")
+    p_extract = sub.add_parser("extract", help="从正文章节提取实体和关系候选（需语义复核）")
     p_extract.add_argument("book_root", help="书籍工程根目录")
     p_extract.add_argument("--chapter", type=int, required=True, help="章节号")
     p_extract.add_argument("--update", action="store_true", help="提取后自动更新图谱")
@@ -1100,7 +1135,7 @@ def main():
         print(json.dumps(result, ensure_ascii=False, indent=2))
 
     elif args.command == "impact":
-        result = impact_analysis(book_root, args.node)
+        result = impact_analysis(book_root, args.node, args.chapter)
         print(json.dumps(result, ensure_ascii=False, indent=2))
 
     elif args.command == "export":

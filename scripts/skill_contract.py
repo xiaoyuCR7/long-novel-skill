@@ -193,7 +193,7 @@ def _resolve_reference(root, document, value, markdown=False):
         return None
     if value.startswith("/") or "\\" in value:
         return None
-    explicit = value.startswith(("references/", "scripts/", "assets/", "evaluations/", "mcp_server/"))
+    explicit = value.startswith(("references/", "scripts/", "assets/", "evals/", "evaluations/", "mcp_server/"))
     if not explicit and not markdown and not re.match(r"[A-Za-z_.][A-Za-z0-9_./-]*\.(?:md|py|json)$", value):
         return None
     if explicit:

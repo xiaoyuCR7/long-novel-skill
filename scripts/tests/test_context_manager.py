@@ -490,6 +490,75 @@ class TestRequiredContext(unittest.TestCase):
         self.assertIn("第二天上午", content)
         self.assertNotIn("已结束事件179", content)
 
+    def test_unknown_tracking_sections_are_not_silently_lost(self):
+        self.write("追踪/时间线.md", "# 时间线\n## 当前锚点\n第二天。\n"
+                   "## 特别约定\n铜门只能由两人同时开启。\n## 历史归档\n旧事已完。")
+        self.write("追踪/伏笔台账.md", "# 伏笔\n## 🟡 活跃\n钥匙尚未找到。\n"
+                   "## 特别约定\n母亲从未见过铜门。\n## ✅ 已回收\n旧信已解。")
+        result = select_context(self.root, 2)
+        self.assertIn("两人同时", result["components"]["timeline"]["content"])
+        self.assertIn("从未见过", result["components"]["foreshadowing"]["content"])
+        self.assertNotIn("旧事已完", result["components"]["timeline"]["content"])
+
+    def test_legacy_overflow_has_actionable_selection_receipt(self):
+        history = "\n".join("第{}章：旧事已结束。".format(i) for i in range(500))
+        self.write("追踪/时间线.md", "# 时间线\n" + history)
+        result = select_context(self.root, 2, max_chars=1000)
+        self.assertFalse(result["ready"])
+        self.assertIn("selection_receipt", result)
+        receipt = result["selection_receipt"]
+        self.assertEqual(receipt["required_chars"], result["required_chars"])
+        entry = receipt["tracking"]["timeline"]
+        self.assertEqual(entry["mode"], "legacy_preserved")
+        self.assertEqual(entry["omitted_chars"], 0)
+        self.assertIn("inspect-state", entry["next_action"])
+        self.assertIn("legacy_preserved", __import__("context_manager").generate_context_report(result))
+
+    def test_lifecycle_words_inside_unknown_or_negative_titles_do_not_drop_constraints(self):
+        import context_manager as cm
+        for heading in ("未归档事项", "待归档", "归档前核对", "历史真相", "历史资料", "未回收", "✅ 未完成"):
+            for kind in ("timeline", "foreshadowing"):
+                with self.subTest(heading=heading, kind=kind):
+                    content = "# 追踪\n## " + heading + "\n铜门只能由两人同时开启。\n"
+                    selection = cm._tracking_selection(content, kind)
+                    self.assertIn("两人同时", selection["content"])
+                    self.assertEqual(selection["omitted_chars"], 0)
+
+
+    def test_selection_receipt_is_hashed_and_archives_explained(self):
+        import context_manager as cm
+        self.write("追踪/时间线.md", "# 时间线\n## 当前锚点\n第二天。\n## 历史归档\n旧事。")
+        result = select_context(self.root, 2)
+        self.assertIn("selection_receipt", result)
+        receipt = result["selection_receipt"]["tracking"]["timeline"]
+        self.assertGreater(receipt["omitted_chars"], 0)
+        self.assertTrue(any(s["reason"] == "explicit_archive" for s in receipt["sections"]))
+        self.assertTrue(cm.verify_context(self.root, result)["ready"])
+        result["selection_receipt"]["required_chars"] = 0
+        self.assertFalse(cm.verify_context(self.root, result)["ready"])
+
+    def test_inspect_state_is_external_candidate_only_and_preserves_unknown(self):
+        command = [sys.executable, "-X", "utf8", str(SCRIPT_DIR / "context_manager.py"),
+                   "inspect-state", str(self.root), "--chapter", "2"]
+        # The shared read lock may create its coordination file; canon must not change.
+        before = {str(p.relative_to(self.root)): p.read_bytes() for p in self.root.rglob("*")
+                  if p.is_file() and p.name != ".chapter-transaction.lock"}
+        with tempfile.TemporaryDirectory() as output_dir:
+            output = Path(output_dir) / "candidate.json"
+            run = subprocess.run(command + ["--output", str(output)], capture_output=True, encoding="utf-8")
+            self.assertEqual(run.returncode, 0, run.stderr)
+            candidate = json.loads(output.read_text(encoding="utf-8"))
+            self.assertFalse(candidate["applied"])
+            self.assertTrue(candidate["manual_review_required"])
+            self.assertIn("末班车", candidate["sources"]["timeline"]["original_content"])
+        inside = self.root / "追踪/candidate.json"
+        run = subprocess.run(command + ["--output", str(inside)], capture_output=True, encoding="utf-8")
+        self.assertNotEqual(run.returncode, 0)
+        self.assertFalse(inside.exists())
+        after = {str(p.relative_to(self.root)): p.read_bytes() for p in self.root.rglob("*")
+                 if p.is_file() and p.name != ".chapter-transaction.lock"}
+        self.assertEqual(before, after)
+
     def test_timeline_without_top_level_title_still_drops_history(self):
         self.write("追踪/时间线.md", "## 历史记录\n已结束旧事。\n"
                    "## 当前时间锚点\n第二天上午，末班车还有两小时。")

@@ -52,6 +52,8 @@ metadata:
 | 平台选择、投稿、发布 | `references/platforms/platform-guide.md` |
 | 简介、标签、封面、上架物料 | `references/workflow/publishing-pack.md` |
 | Dashboard 工作台、浏览/编辑工程文件 | `references/workflow/dashboard-workbench.md`；按用户授权范围操作 |
+| 记住、更正、忘记作者偏好 | `references/workflow/author-preferences.md`；只记录明确授权的创作偏好 |
+| 统计分数、图谱证据、旧追踪溢出、评测 | `references/workflow/evidence-review.md` |
 
 请求组合多个模式、项目状态含糊或依赖不可用时，必须先读
 `references/workflow/task-router.md`。题材确定后只加载 `references/genres/INDEX.md` 匹配出的
@@ -64,6 +66,8 @@ metadata:
    章节摘要、角色状态、伏笔台账、时间线、节奏配额和未通过门禁，并声明降级。
    `external`/`unknown` 不等于空书；按 `task-router.md` 的外稿恢复分流，不猜第1章或自动迁移。
 3. 加载当前任务的 required context；只有章意图实际需要时才增加 conditional context。
+   工作区存在作者偏好且当前任务涉及文风/创作约定时，按 `author-preferences.md` 查询匹配范围；
+   不存在不创建。本轮决定优先，偏好不能覆盖正文事实或替代本书 required context。
 4. 按权威顺序解决矛盾；无法安全裁决时停止在最小决策点。
 
 ## Required context for a long-form chapter
@@ -78,6 +82,7 @@ metadata:
 required 信息必须无损保留；缺失/不可读或预算装不下则停止，不能把裁剪包交作完整 Brief。
 已保存的上下文包复用前核验来源指纹；变更后重新装配。哈希只证明内容未变，不证明摘要正确，
 来源冲突仍按权威顺序核对正文。
+统计分数不代表语义审查通过；图谱关系是附来源的未确认候选，问句、推测和旧提取不能升级成正文事实。
 
 ## Chapter transaction
 

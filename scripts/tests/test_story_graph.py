@@ -10,6 +10,7 @@
 """
 
 import json
+import hashlib
 import os
 import shutil
 import subprocess
@@ -464,6 +465,209 @@ class TestBackupGraph(_BaseGraphTest):
         path = self.book_root / "nonexistent.json"
         result = backup_graph(path)
         self.assertIsNone(result)
+
+
+class TestAssertionEvidence(_BaseGraphTest):
+    """词面命中仅生成可复核候选，不能证明故事事实。"""
+
+    def setUp(self):
+        super().setUp()
+        for name in ("林辰", "苏明", "沈宁"):
+            self._write(f"设定/角色/{name}.md", f"# {name}\n")
+
+    def _extract(self, text):
+        self._write("正文/第001章_测试.md", text)
+        return story_graph.extract_from_chapter(self.book_root, 1)
+
+    def test_declarative_candidate_has_exact_source_evidence(self):
+        text = "# 第1章\n\n林辰杀死苏明。\n"
+        result = self._extract(text)
+        self.assertEqual(len(result["new_edges"]), 1)
+        edge = result["new_edges"][0]
+        self.assertEqual(edge.get("status"), "unconfirmed")
+        self.assertTrue(edge.get("semantic_review_required"))
+        self.assertEqual(edge["assertion_kind"], "declarative")
+        evidence = edge["evidence"]
+        self.assertEqual(evidence["chapter"], 1)
+        self.assertEqual(evidence["source_path"], "正文/第001章_测试.md")
+        self.assertEqual(evidence["source_hash"], hashlib.sha256(text.encode("utf-8")).hexdigest())
+        self.assertEqual(text[slice(*evidence["span"])], evidence["text"])
+        self.assertEqual(text[slice(*evidence["match_span"])], "林辰杀死苏明")
+
+    def test_question_hypothesis_negation_and_quoted_claim_stay_unconfirmed(self):
+        cases = [
+            ('他问：“林辰杀苏明？”', "question"),
+            ("如果林辰杀死苏明，沈宁就会追查。", "hypothetical"),
+            ("林辰没有杀死苏明。", "negated"),
+            ('沈宁说：“林辰杀死苏明。”', "quoted_claim"),
+            ("听说林辰杀死苏明。", "quoted_claim"),
+        ]
+        for text, kind in cases:
+            with self.subTest(text=text):
+                edges = self._extract(text)["new_edges"]
+                self.assertEqual(len(edges), 1)
+                edge = edges[0]
+                self.assertEqual(edge["source_label"], "林辰")
+                self.assertEqual(edge["target_label"], "苏明")
+                self.assertEqual(edge.get("assertion_kind"), kind)
+                self.assertEqual(edge.get("status"), "unconfirmed")
+                self.assertTrue(edge.get("semantic_review_required"))
+
+    def test_longer_names_and_unknown_aliases_do_not_become_known_entities(self):
+        self._write("设定/角色/林辰天.md", "# 林辰天\n")
+        result = self._extract("林辰天杀死苏明。")
+        self.assertEqual(result["characters_found"], ["林辰天", "苏明"])
+        self.assertEqual(result["new_edges"][0]["source_label"], "林辰天")
+        self.assertEqual(self._extract("林辰杀死苏明月。小辰杀死苏明。")["new_edges"], [])
+
+    def test_role_change_requires_current_known_name_not_invented_alias(self):
+        result = self._extract("沈宁杀死苏明。")
+        self.assertEqual(result["new_edges"][0]["source_label"], "沈宁")
+        self.assertEqual(self._extract("阿宁杀死苏明。")["new_edges"], [])
+
+    def test_no_ownership_inference_from_giving_or_accompanying_people(self):
+        result = self._extract("林辰带着苏明。林辰给苏明。")
+        self.assertEqual(result["new_edges"], [])
+
+    def test_repeated_mentions_keep_distinct_support_and_context(self):
+        result = self._extract('林辰杀死苏明。他问：“林辰杀死苏明？”')
+        self.assertEqual([e.get("assertion_kind") for e in result["new_edges"]],
+                         ["declarative", "question"])
+
+    def test_extract_update_preserves_node_identity_and_replaces_old_source(self):
+        self._write_json(f"追踪/{GRAPH_FILE}", {
+            "nodes": [{"id": "character_林辰", "label": "林辰", "type": "character", "props": {"note": "保留"}}],
+            "edges": [],
+        })
+        self._extract("林辰杀死苏明。")
+        first = story_graph.extract_and_update(self.book_root, 1)
+        self.assertTrue(first["ok"])
+        graph = load_json(self._graph_path())
+        self.assertEqual(len([n for n in graph["nodes"] if n["label"] == "林辰"]), 1)
+        self.assertEqual(graph["edges"][0]["source"], "character_林辰")
+        old_hash = graph["edges"][0]["evidence"]["source_hash"]
+        repeat = story_graph.extract_and_update(self.book_root, 1)
+        self.assertEqual(repeat["added_nodes"], 0)
+        self.assertEqual(repeat["added_edges"], 0)
+        self._extract("沈宁杀死苏明。")
+        story_graph.extract_and_update(self.book_root, 1)
+        graph = load_json(self._graph_path())
+        self.assertEqual(len(graph["edges"]), 1)
+        self.assertEqual(graph["edges"][0]["source"], "char_沈宁")
+        self.assertNotEqual(graph["edges"][0]["evidence"]["source_hash"], old_hash)
+        self._extract("沈宁望着窗外。")
+        story_graph.extract_and_update(self.book_root, 1)
+        self.assertEqual(load_json(self._graph_path())["edges"], [])
+
+    def test_query_marks_changed_or_missing_source_stale_without_writing(self):
+        self._write_json(f"追踪/{GRAPH_FILE}", {"nodes": [], "edges": []})
+        self._extract("林辰杀死苏明。")
+        story_graph.extract_and_update(self.book_root, 1)
+        graph_bytes = self._graph_path().read_bytes()
+        self._extract("林辰没有杀死苏明。")
+        edge = story_graph.query_graph(self.book_root, "林辰")["edges"][0]
+        self.assertEqual(edge.get("status"), "stale")
+        self.assertTrue(edge.get("semantic_review_required"))
+        self.assertIn("来源已变更", export_mermaid(self.book_root))
+        (self.book_root / "正文/第001章_测试.md").unlink()
+        self.assertEqual(story_graph.query_graph(self.book_root, "林辰")["edges"][0]["status"], "stale")
+        self.assertEqual(self._graph_path().read_bytes(), graph_bytes)
+
+    def test_legacy_semantic_edges_are_readable_but_unconfirmed(self):
+        graph = {"nodes": [
+            {"id": "a", "label": "林辰", "type": "character"},
+            {"id": "b", "label": "苏明", "type": "character"},
+        ], "edges": [{"source": "a", "target": "b", "type": "kills", "label": "杀死", "chapter": 1, "props": {}}]}
+        self._write_json(f"追踪/{GRAPH_FILE}", graph)
+        result = story_graph.query_graph(self.book_root, "林辰")
+        self.assertEqual(result["edges"][0].get("status"), "legacy_unconfirmed")
+        self.assertTrue(result["edges"][0].get("semantic_review_required"))
+        self.assertIn("未确认", export_mermaid(self.book_root))
+        self.assertIn("杀死", export_mermaid(self.book_root))
+        self.assertEqual(load_json(self._graph_path()), graph)
+
+    def test_summary_build_and_update_share_evidence_rules(self):
+        source = "### 第1章\n- 发生了什么：如果林辰杀死苏明，沈宁就会追查。\n- 关键实体：character:林辰、character:苏明。\n"
+        self._write(f"追踪/{CHAPTER_SUMMARY_FILE}", source)
+        graph = self._build_and_save()
+        self.assertEqual(len(graph["edges"]), 1)
+        self.assertEqual(graph["edges"][0].get("assertion_kind"), "hypothetical")
+        evidence = graph["edges"][0]["evidence"]
+        self.assertEqual(source[slice(*evidence["span"])], evidence["text"])
+        self.assertEqual(update_chapter(self.book_root, 1)["added_edges"], 0)
+        self._write(f"追踪/{CHAPTER_SUMMARY_FILE}", source.replace("如果林辰杀死苏明，沈宁就会追查", "林辰没有杀死苏明"))
+        update_chapter(self.book_root, 1)
+        graph = load_json(self._graph_path())
+        self.assertEqual(len(graph["edges"]), 1)
+        self.assertEqual(graph["edges"][0]["assertion_kind"], "negated")
+
+    def test_each_chapter_keeps_its_own_evidence(self):
+        self._write_json(f"追踪/{GRAPH_FILE}", {"nodes": [], "edges": []})
+        self._extract("林辰杀死苏明。")
+        self._write("正文/第002章_测试.md", "林辰杀死苏明。")
+        story_graph.extract_and_update(self.book_root, 1)
+        story_graph.extract_and_update(self.book_root, 2)
+        self.assertEqual({e["chapter"] for e in load_json(self._graph_path())["edges"]}, {1, 2})
+
+    def test_reextraction_keeps_unattributed_legacy_and_structural_edges(self):
+        legacy = {"source": "a", "target": "b", "type": "kills", "label": "杀死", "chapter": 1}
+        structural = {"source": "a", "target": "b", "type": "appears_in", "label": "出现于", "chapter": 1}
+        self._write_json(f"追踪/{GRAPH_FILE}", {
+            "nodes": [{"id": "a", "label": "林辰", "type": "character"},
+                      {"id": "b", "label": "苏明", "type": "character"}],
+            "edges": [legacy, structural],
+        })
+        self._extract("林辰站在门外。")
+        story_graph.extract_and_update(self.book_root, 1)
+        self.assertEqual(load_json(self._graph_path())["edges"], [legacy, structural])
+        result = story_graph.query_graph(self.book_root, "林辰")
+        self.assertEqual([e["status"] for e in result["edges"]], ["legacy_unconfirmed", "structural"])
+
+    def test_existing_duplicate_labels_do_not_leave_dangling_legacy_edges(self):
+        self._write_json(f"追踪/{GRAPH_FILE}", {
+            "nodes": [{"id": "char_林辰", "label": "林辰", "type": "character"},
+                      {"id": "character_林辰", "label": "林辰", "type": "character"},
+                      {"id": "b", "label": "苏明", "type": "character"}],
+            "edges": [{"source": "char_林辰", "target": "b", "type": "kills", "label": "杀死", "chapter": 1}],
+        })
+        self._extract("林辰站在门外。")
+        story_graph.extract_and_update(self.book_root, 1)
+        graph = load_json(self._graph_path())
+        ids = {n["id"] for n in graph["nodes"]}
+        self.assertTrue(all(e["source"] in ids and e["target"] in ids for e in graph["edges"]))
+
+    def test_query_depth_two_reaches_second_hop(self):
+        self._write_json(f"追踪/{GRAPH_FILE}", {
+            "nodes": [{"id": n, "label": n, "type": "character"} for n in ("林辰", "苏明", "沈宁")],
+            "edges": [{"source": "林辰", "target": "苏明", "type": "kills", "label": "杀死"},
+                      {"source": "苏明", "target": "沈宁", "type": "hates", "label": "仇恨"}],
+        })
+        result = story_graph.query_graph(self.book_root, "林辰", depth=2)
+        self.assertEqual({n["label"] for n in result["nodes"]}, {"林辰", "苏明", "沈宁"})
+        self.assertEqual(len(result["edges"]), 2)
+
+    def test_revision_impact_separates_source_mentions_from_possible_dependents(self):
+        self._write_json(f"追踪/{GRAPH_FILE}", {
+            "nodes": [{"id": n, "label": n, "type": "character"} for n in ("林辰", "苏明", "沈宁")],
+            "edges": [
+                {"source": "林辰", "target": "苏明", "type": "kills", "label": "杀死", "chapter": 2},
+                {"source": "苏明", "target": "沈宁", "type": "hates", "label": "仇恨", "chapter": 3},
+            ],
+        })
+        self._write_json(f"追踪/{ENTITY_INDEX_FILE}", {"林辰": [1, 5], "沈宁": [7]})
+        self._extract("林辰独自站在门前。")
+        before = {p.relative_to(self.book_root): p.read_bytes() for p in self.book_root.rglob("*") if p.is_file()}
+        result = story_graph.impact_analysis(self.book_root, "林辰", chapter=1)
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["definite_entities"], ["林辰"])
+        self.assertEqual(result["definite_chapters"], [1])
+        self.assertEqual(set(result["possible_entities"]), {"苏明", "沈宁"})
+        self.assertEqual(set(result["possible_chapters"]), {2, 3, 5, 7})
+        self.assertTrue(result["semantic_review_required"])
+        self.assertTrue(result["read_only"])
+        self.assertTrue(result["references"])
+        after = {p.relative_to(self.book_root): p.read_bytes() for p in self.book_root.rglob("*") if p.is_file()}
+        self.assertEqual(before, after)
 
 
 # =========================================================
