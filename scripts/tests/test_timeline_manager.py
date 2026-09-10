@@ -4,6 +4,8 @@
 
 import os
 import sys
+import json
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -174,6 +176,46 @@ class TestCheck(unittest.TestCase):
         md = MD_NEW.replace("穿越后第5天", "穿越后第2天")  # ch3(2) < ch2(3) 倒退
         issues, meta = check_timeline(None, md_text=md)
         self.assertTrue(any(i["type"] == "C1_time_regression" for i in issues))
+
+    def test_marked_time_regression_requires_semantic_review(self):
+        for marker in ("闪回", "插叙", "时间回溯", "时间循环", "重生"):
+            with self.subTest(marker=marker):
+                md = MD_NEW.replace("穿越后第5天", "穿越后第2天").replace(
+                    "| 突破 |  |", f"| 突破 | {marker}；依据：世界观第三条 |")
+                issues, meta = check_timeline(None, md_text=md)
+                regression = next(i for i in issues if i["type"] == "C1_time_regression")
+                self.assertEqual(regression["level"], "WARN")
+                self.assertTrue(regression["semantic_review_required"])
+                self.assertEqual(regression["time_marker"], marker)
+                self.assertIn("尚未验证", regression["fix_hint"])
+                self.assertEqual(meta["error_count"], 0)
+
+    def test_time_regression_only_accepts_explicit_marker_items(self):
+        for marker in ("", "没有时间回溯", "并非闪回", "禁止重生", "讨论时间循环", "时间回溯未发生"):
+            with self.subTest(marker=marker):
+                md = MD_NEW.replace("穿越后第5天", "穿越后第2天").replace(
+                    "| 突破 |  |", f"| 时间回溯已被提及 | {marker} |")
+                issues, meta = check_timeline(None, md_text=md)
+                self.assertEqual(meta["error_count"], 1)
+                self.assertEqual(next(i for i in issues if i["type"] == "C1_time_regression")["level"], "ERROR")
+
+    def test_time_regression_cli_exit_codes(self):
+        script = Path(__file__).resolve().parents[1] / "timeline_manager.py"
+        with tempfile.TemporaryDirectory() as td:
+            book = Path(td)
+            (book / "追踪").mkdir()
+            path = book / "追踪" / "时间线.md"
+            for marker, time, expected_code, errors in (
+                ("", "5", 0, 0), ("时间回溯", "2", 1, 0),
+                ("", "2", 1, 1), ("没有时间回溯", "2", 1, 1),
+            ):
+                with self.subTest(marker=marker, time=time):
+                    path.write_text(MD_NEW.replace("穿越后第5天", f"穿越后第{time}天").replace(
+                        "| 突破 |  |", f"| 突破 | {marker} |"), encoding="utf-8")
+                    result = subprocess.run([sys.executable, "-B", str(script), "check", str(book), "--json"],
+                                            capture_output=True, encoding="utf-8")
+                    self.assertEqual(result.returncode, expected_code, result.stderr)
+                    self.assertEqual(json.loads(result.stdout)["meta"]["error_count"], errors)
 
     def test_c2_silent_jump(self):
         md = MD_NEW.replace("穿越后第5天", "穿越后第100天")

@@ -76,6 +76,8 @@ _PROMISE_RE = re.compile(
     rf"([{_NUM_CLS}]+)\s*个?月(?:后|之后|以后)|"
     rf"([{_NUM_CLS}]+)\s*年(?:后|之后|以后)")
 _JUMP_MARKER_RE = re.compile(r"\d+\s*(?:年后|月后|日后|天后)|数月后|几日后|若干年后|三个月后|半年后|一年后")
+# 仅接受时间标记/约定列的独立分号项，不从事件或否定句推断叙述意图。
+_NONLINEAR_TIME_MARKERS = {"闪回", "插叙", "时间回溯", "时间循环", "重生"}
 
 
 def _to_digits(s):
@@ -316,11 +318,17 @@ def check_timeline(book_dir, target_chapter=None, md_text=None, json_out=False):
 
         # C1 时间倒退
         if prev_key is not None and key is not None and key < prev_key:
+            marker = next((part.strip() for part in re.split(r"[;；]", cur["promise"])
+                           if part.strip() in _NONLINEAR_TIME_MARKERS), "")
             issues.append({
-                "level": "ERROR", "type": "C1_time_regression",
+                "level": "WARN" if marker else "ERROR", "type": "C1_time_regression",
                 "chapter_from": prev_ch, "chapter_to": cur["chapter"],
-                "message": f"第{cur['chapter']}章时间({cur['time_desc']})早于第{prev_ch}章({norm[i-1]['time_desc']})",
-                "fix_hint": "检查是否闪回/插叙；如确为闪回，在时间标记列注明「闪回」",
+                "message": f"第{cur['chapter']}章时间({cur['time_desc']})早于第{prev_ch}章({norm[i-1]['time_desc']})"
+                           + (f"；已标记「{marker}」，需语义核对" if marker else ""),
+                "fix_hint": ("标记仅记录叙述意图；尚未验证符合本书世界规则，需核对事件先后、人物知识与既有设定。"
+                             if marker else "核对时间线；若为非顺叙，在时间标记/约定列以独立项注明"
+                             "「闪回」「插叙」「时间回溯」「时间循环」或「重生」，用分号与其他说明分隔。"),
+                **({"time_marker": marker, "semantic_review_required": True} if marker else {}),
             })
 
         # C2 时间跳跃过大（相邻可解析章 gap 超阈值且无时间标记）

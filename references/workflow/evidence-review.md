@@ -47,6 +47,7 @@ python scripts/context_manager.py inspect-state "{book}" --chapter {N} --output 
 ## 24 个 Agent 场景与结果记录
 
 `evals/cases.json` 包含缺陷 8、干净 8、生成 8，覆盖悬疑、都市、玄幻；案例均为合成输入。
+`evals/fictional-world.json` 另有6个虚构世界补充场景；validate/prepare 用 `--suite evals/fictional-world.json` 选择，记录与评阅方式相同。
 `criteria` 只给评阅者。以下命令须在 Skill 根目录运行，评测目录必须在 Skill 与真实书籍之外：
 
 ```bash

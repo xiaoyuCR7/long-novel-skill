@@ -41,6 +41,20 @@ class TestSkillEval(unittest.TestCase):
             self.assertEqual(sum(c["kind"] == kind for c in suite["cases"]), 8)
         self.assertGreaterEqual(len({c["genre"] for c in suite["cases"]}), 3)
 
+    def test_cli_prepares_selected_fiction_suite_without_reviewer_answers(self):
+        with tempfile.TemporaryDirectory() as temp:
+            run = Path(temp) / "fiction-run"
+            suite = SCRIPTS.parent / "evals/fictional-world.json"
+            command = [sys.executable, "-X", "utf8", str(SCRIPTS / "skill_eval.py"),
+                       "prepare", "F03", str(run), "--suite", str(suite)]
+            result = subprocess.run(command, capture_output=True, encoding="utf-8")
+            self.assertEqual(result.returncode, 0, result.stderr)
+            receipt = json.loads(result.stdout)
+            self.assertEqual(receipt["case_id"], "F03")
+            self.assertEqual(receipt["model_execution"], "not_run")
+            self.assertIn("系统", (run / "prompt.md").read_text(encoding="utf-8"))
+            self.assertEqual({p.name for p in run.iterdir()}, {"prompt.md", "constraints.md", "run.json"})
+
     def test_preparation_contains_raw_inputs_not_answers_and_no_success(self):
         engine = self.engine()
         with tempfile.TemporaryDirectory() as temp:

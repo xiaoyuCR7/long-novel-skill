@@ -18,6 +18,9 @@ metadata:
 - 文件系统是故事的持久记忆；未读取项目状态时，不得用聊天记忆或常识替代。
 - 权威顺序：作者本轮明确决定 > 已发生正文 > 最新追踪状态 > 锁定大纲 > 设定 > 题材卡 >
   对标材料 > 通用建议。发现冲突必须报告，不得静默覆盖高权威来源。
+- 虚构题材以作品内设定为准：玄幻、修仙、武道、系统等不以现实法律、科学或事实作为剧情可行性的硬门禁。
+  “事实/合理性”指故事正典与内部因果，不要求超凡能力在现实存在；设定创作可大胆提出新机制。
+  现实资料核验与虚构创作分别处理，具体按 `references/craft/fictional-world.md`，不把虚构当现实断言。
 - 未有章纲，不写长篇正文；锁定章纲不得被静默改写。用户只要大纲时，在决策点停止。
 - 大纲只授权事件，不规定正文形状。不得把每条 beat 机械扩成一个段落，也不得把工程标签写进正文。
 - 若授权 beats 无法支撑目标篇幅，停止并输出 literal `outline_underfilled`，随后给出
@@ -54,6 +57,7 @@ metadata:
 | Dashboard 工作台、浏览/编辑工程文件 | `references/workflow/dashboard-workbench.md`；按用户授权范围操作 |
 | 记住、更正、忘记作者偏好 | `references/workflow/author-preferences.md`；只记录明确授权的创作偏好 |
 | 统计分数、图谱证据、旧追踪溢出、评测 | `references/workflow/evidence-review.md` |
+| 玄幻、修仙、武道、系统及其他超现实设定的设计/写作/审核 | 在当前动作工作流上加读 `references/craft/fictional-world.md` |
 
 请求组合多个模式、项目状态含糊或依赖不可用时，必须先读
 `references/workflow/task-router.md`。题材确定后只加载 `references/genres/INDEX.md` 匹配出的

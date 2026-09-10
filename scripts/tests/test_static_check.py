@@ -8,6 +8,8 @@
 
 import os
 import sys
+import json
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -137,6 +139,57 @@ class TestParseTimeline(unittest.TestCase):
         entries = _parse_timeline_entries(text)
         self.assertEqual(len(entries), 2)
         self.assertEqual(entries[0][0], "1")
+
+
+class TestCheckTimeline(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name)
+        (self.root / "追踪").mkdir()
+        self.timeline = self.root / "追踪" / "时间线.md"
+
+    def write_timeline(self, marker="", time=1, event="回到入宗日"):
+        self.timeline.write_text(
+            "| 章节 | 故事内时间 | 事件 | 时间标记/约定 |\n"
+            "| --- | --- | --- | --- |\n"
+            "| 第1章 | 第10天 | 遭劫 | |\n"
+            f"| 第2章 | 第{time}天 | {event} | {marker} |\n", encoding="utf-8")
+
+    def test_marked_time_regression_requires_semantic_review(self):
+        for marker in ("闪回", "插叙", "时间回溯", "时间循环", "重生"):
+            with self.subTest(marker=marker):
+                self.write_timeline(f"{marker}；依据：世界观第三条")
+                result = check_timeline(self.root, target_chapter=2)
+                self.assertEqual(result.status, "WARN")
+                self.assertIn("需语义核对", result.message)
+                self.assertIn(marker, " ".join(result.details))
+                self.assertIn("尚未验证", " ".join(result.fix_hints))
+
+    def test_time_regression_only_accepts_explicit_marker_items(self):
+        for marker in ("", "没有时间回溯", "并非闪回", "禁止重生", "讨论时间循环", "时间回溯未发生"):
+            with self.subTest(marker=marker):
+                self.write_timeline(marker, event="时间回溯已被提及")
+                self.assertEqual(check_timeline(self.root).status, "FAIL")
+
+    def test_marked_regression_does_not_hide_another_unmarked_regression(self):
+        self.write_timeline("时间循环", time=2)
+        with self.timeline.open("a", encoding="utf-8") as out:
+            out.write("| 第3章 | 第1天 | 再度归来 | |\n")
+        self.assertEqual(check_timeline(self.root).status, "FAIL")
+
+    def test_time_regression_cli_exit_codes(self):
+        for marker, time, expected_code, status in (
+            ("", 11, 0, "PASS"), ("时间回溯", 1, 1, "WARN"),
+            ("", 1, 1, "FAIL"), ("没有时间回溯", 1, 1, "FAIL"),
+        ):
+            with self.subTest(marker=marker, time=time):
+                self.write_timeline(marker, time)
+                result = subprocess.run([sys.executable, "-B", str(SCRIPT_DIR / "static_check.py"),
+                                         str(self.root), "--json"], capture_output=True, encoding="utf-8")
+                self.assertEqual(result.returncode, expected_code, result.stderr)
+                checks = json.loads(result.stdout)["results"]
+                self.assertEqual(next(r for r in checks if r["category"] == "TIMELINE")["status"], status)
 
 
 class TestParseForeshadowLedger(unittest.TestCase):

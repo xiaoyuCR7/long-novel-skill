@@ -71,6 +71,8 @@ FORESHADOW_REVEAL_KEYWORDS = [
 
 # 字数差异告警阈值（百分比）
 WORDCOUNT_DIFF_THRESHOLD = 2.0  # 200%
+# 与 timeline_manager 保持相同的显式标记格式；本脚本也可独立打包运行。
+_NONLINEAR_TIME_MARKERS = {"闪回", "插叙", "时间回溯", "时间循环", "重生"}
 
 # 追踪文件检查项
 SYNC_CHECK_FILES = [
@@ -371,7 +373,8 @@ def check_timeline(book_dir: Path, target_chapter: int = None) -> CheckResult:
     for e in entries_to_check:
         # 时间描述通常在第2列（索引1）
         time_desc = e[1] if len(e) > 1 else ""
-        time_descs.append((e[0], time_desc))
+        time_marker = e[3] if len(e) > 3 else ""
+        time_descs.append((e[0], time_desc, time_marker))
 
     # 解析时间描述中的数字线索（如"第三天""一月""第X年"等）
     def _extract_time_order(desc: str) -> int:
@@ -398,29 +401,39 @@ def check_timeline(book_dir: Path, target_chapter: int = None) -> CheckResult:
     # 检查相邻条目时间是否倒退
     regressions = []
     for i in range(1, len(time_descs)):
-        ch_from, desc_from = time_descs[i - 1]
-        ch_to, desc_to = time_descs[i]
+        ch_from, desc_from, _ = time_descs[i - 1]
+        ch_to, desc_to, time_marker = time_descs[i]
         order_from = _extract_time_order(desc_from)
         order_to = _extract_time_order(desc_to)
 
         if order_from != -1 and order_to != -1 and order_to < order_from:
+            # 只读第4列的独立分号项；「没有时间回溯」等否定句不构成标记。
+            marker = next((part.strip() for part in re.split(r"[;；]", time_marker)
+                           if part.strip() in _NONLINEAR_TIME_MARKERS), "")
             regressions.append({
                 "chapter_from": ch_from,
                 "chapter_to": ch_to,
                 "time_from": desc_from,
                 "time_to": desc_to,
+                "time_marker": marker,
             })
 
     if regressions:
+        unmarked_count = sum(1 for r in regressions if not r["time_marker"])
         details = [f"第{r['chapter_from']}章({r['time_from']}) → "
-                   f"第{r['chapter_to']}章({r['time_to']})" for r in regressions]
+                   f"第{r['chapter_to']}章({r['time_to']})"
+                   + (f"；已标记「{r['time_marker']}」，需语义核对" if r["time_marker"] else "")
+                   for r in regressions]
         fix_hints = [
-            "检查时间线表格中标记的时间是否正确，确认是否存在闪回/插叙",
-            "如确为闪回情节，在时间线中注明「闪回」以避免误报",
+            "标记仅记录叙述意图；尚未验证符合本书世界规则，需核对事件先后、人物知识与既有设定。",
         ]
+        if unmarked_count:
+            fix_hints.append("核对时间线；若为非顺叙，在时间标记/约定列以独立项注明"
+                             "「闪回」「插叙」「时间回溯」「时间循环」或「重生」，用分号与其他说明分隔。")
         return CheckResult(
-            "TIMELINE", "时间线一致性", "FAIL",
-            f"发现 {len(regressions)} 处时间倒退",
+            "TIMELINE", "时间线一致性", "FAIL" if unmarked_count else "WARN",
+            (f"发现 {unmarked_count} 处未标记的时间倒退" if unmarked_count
+             else f"发现 {len(regressions)} 处已标记的非顺叙时间变化，需语义核对"),
             details=details,
             fix_hints=fix_hints,
         )

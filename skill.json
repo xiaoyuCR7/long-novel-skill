@@ -76,14 +76,14 @@
     "homepage": "https://github.com/xiaoyuCR7/long-novel-skill",
     "repository": "https://github.com/xiaoyuCR7/long-novel-skill",
     "created": "2026-07-26",
-    "last_reviewed": "2026-09-05",
+    "last_reviewed": "2026-09-10",
     "review_interval_days": 90,
     "genre_cards_count": 34,
     "scripts_count": 46,
-    "tests_count": 1192,
-    "craft_files_count": 49,
+    "tests_count": 1200,
+    "craft_files_count": 50,
     "workflow_files_count": 29,
-    "reference_files_count": 116
+    "reference_files_count": 117
   },
   "source_references": [
     {

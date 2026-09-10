@@ -306,7 +306,7 @@ FLOW_SCRIPT_TIMEOUT = _env_int("FLOW_SCRIPT_TIMEOUT", 120)
 
 # 角色名一致性：正文出现的角色名必须在 设定/角色/ 有对应卡
 STATIC_CHECK_STRICT_CHARACTER = False  # 非严格模式：只报 WARN
-# 时间线一致性：章节间时间推进不能倒退（static_check 的 C1 兼容检查）
+# 时间线一致性：未标记倒退报错，明确非顺叙标记转语义核对（static_check 的 C1 兼容检查）
 STATIC_CHECK_TIMELINE = True
 
 # =============================================================================

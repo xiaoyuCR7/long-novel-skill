@@ -220,10 +220,12 @@ def main(argv=None):
     ensure_utf8_stdout()
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
-    sub.add_parser("validate")
+    validate = sub.add_parser("validate")
+    validate.add_argument("--suite", help="alternate case catalog; default: evals/cases.json")
     prepare = sub.add_parser("prepare")
     prepare.add_argument("case_id")
     prepare.add_argument("output")
+    prepare.add_argument("--suite", help="alternate case catalog; reviewer criteria stay out of prepared inputs")
     record = sub.add_parser("record")
     record.add_argument("run_dir")
     record.add_argument("--response", required=True)
@@ -235,9 +237,9 @@ def main(argv=None):
     args = parser.parse_args(argv)
     try:
         if args.command == "validate":
-            result = {"cases": len(load_suite()["cases"]), "fixture_validation": "pass", "model_execution": "not_run"}
+            result = {"cases": len(load_suite(args.suite)["cases"]), "fixture_validation": "pass", "model_execution": "not_run"}
         elif args.command == "prepare":
-            result = prepare_case(args.case_id, args.output)
+            result = prepare_case(args.case_id, args.output, args.suite)
         elif args.command == "record":
             result = record_run(args.run_dir, args.response, args.trace, args.model)
         else:
